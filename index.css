@@ -1,0 +1,156 @@
+*{
+    margin: 0;
+    padding: 0;
+    font-family: 'Franklin Gothic Medium', 'Arial Narrow', Arial, sans-serif;
+}
+
+.Homepage {
+    background-image: url(./images/Homepage.png);
+    background-position: center center;
+    background-size: cover;
+    background-repeat: no-repeat;
+    width: 100vw;
+    height: fit-content;
+    justify-items: center;
+}
+
+.Heading {
+    text-align: center;
+    padding: 30px;
+}
+
+h3 {
+    color: rgb(214, 214, 214);
+    font-size: xx-large;
+}
+
+.boxes {
+    display: flex;
+    margin: 50px;
+    justify-content: center;
+    gap: 50px;
+}
+
+.box1, .box2 {
+    width: 200px;
+    height: fit-content;
+    background-color: #CED9FF;
+    border-radius: 30px;
+    justify-items: center;
+    padding: 30px;
+}
+
+h1 {
+    font-size: 2.2rem;
+    font-weight: bold;
+    margin: 20px;
+    text-align: center;
+}
+
+h2 {
+    color: rgb(85, 85, 85);
+    font-size: 1.5rem;
+    border-bottom: black solid;
+    padding-bottom: 12px;
+    text-align: center;
+}
+
+button {
+    color: white;
+    padding: 10px;
+    padding-right: 30px;
+    padding-left: 30px;
+    border-radius: 20px;
+    background-color: #0835C8;
+    font-size: 1.5rem;
+    border: none;
+    margin: 30px;
+}
+
+button:hover {
+    text-transform: uppercase;
+    font-size: 2rem;
+}
+
+button:active {
+    text-transform: uppercase;
+    font-size: 2rem;
+    opacity: 5%;
+}
+
+
+ #FACILITY {
+    display: none;
+}
+
+#NCC
+{
+    display: none;
+} 
+
+.NCC_form, .Facility_form {
+    justify-items: center;
+ 
+}
+
+p {
+    text-align: center;
+    color: gray;
+    font-size: 2rem;
+    margin-bottom: 20px;
+}
+
+span { 
+    color: blue;
+    font-size: 1rem;
+    margin-left: 10px;
+}
+
+.Sign_up {
+    color: blue;
+    font-size: 2rem;
+}
+
+input {
+    width: 70vw;
+    margin: 10px;
+    padding: 10px;
+    font-size: large;
+    border: gray solid 1px;
+    display: block;
+}
+
+label {
+    font-size: larger;
+    display: block;
+    margin-top: 20px;
+}
+
+@media screen and (max-width: 798px ) {
+    .Logo {
+        width: 300px;
+    }
+
+    .box1,.box2 
+    {
+       display: inline;
+    }
+    
+    .boxes {
+        display: flex;
+        
+        margin: 50px;
+        justify-items: center;
+        gap: 30px;
+    }
+
+    input {
+    width: 90vw;
+    }
+
+    label {
+    padding: 10px;
+    font-size: larger;
+    display: block;
+    }
+}
