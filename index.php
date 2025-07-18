@@ -74,9 +74,8 @@ if($_SERVER["REQUEST_METHOD"] == "POST"){
                                     $_SESSION["loggedin"] = true;
                                     $_SESSION["email"] = $email;
                             
-                                    echo "You are logged in";
+                                    header("location: ./Pages/Facility.php");
                                 }
-                            
                             else
                             {
                                 echo "you are NCC";
