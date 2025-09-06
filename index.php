@@ -78,7 +78,7 @@ if($_SERVER["REQUEST_METHOD"] == "POST"){
                                 }
                             else
                             {
-                                echo "you are NCC";
+                                header("location: ./Pages/NCC.php");
                             }
                             }
                         } else{
@@ -159,8 +159,8 @@ if($_SERVER["REQUEST_METHOD"] == "POST"){
                <span class="invalid-feedback"><?php echo $password_err; ?></span>
                <span>Forgotten Passord?</span>
         </div>
-        <button type='submit'>
-          Login
+        <button type='submit' >
+         <a href='./Pages/NCC.php'>Login</a>
         </button>
         </div>
          <p>Don't have an account? 
