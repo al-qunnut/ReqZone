@@ -251,8 +251,8 @@ i {
   transform: translateY(-2px) scale(1.01);
 }
 .doc-preview img {
-  width: 60px;
-  height: 80px;
+  width: 80px;
+  height: 100px;
   object-fit: cover;
   border-radius: 8px;
   background: #e3eaff;
@@ -922,7 +922,7 @@ label {
                   <!-- Example Card 1 -->
                   <div class="recent-upload-card accepted">
                     <div class="doc-preview">
-                      <img src="../images/doc-preview.png" alt="Document Preview" />
+                      <img src="../images/Letter.png" alt="Document Preview" />
                     </div>
                     <div class="recent-upload-info">
                       <div class="uploader">
@@ -943,7 +943,7 @@ label {
                   <!-- Example Card 2 -->
                   <div class="recent-upload-card rejected">
                     <div class="doc-preview">
-                      <img src="../images/doc-preview.png" alt="Document Preview" />
+                      <img src="../images/Letter.png" alt="Document Preview" />
                     </div>
                     <div class="recent-upload-info">
                       <div class="uploader">
@@ -964,7 +964,7 @@ label {
                   <!-- Example Card 3 -->
                   <div class="recent-upload-card inprogress">
                     <div class="doc-preview">
-                      <img src="../images/doc-preview.png" alt="Document Preview" />
+                      <img src="../images/Letter.png" alt="Document Preview" />
                     </div>
                     <div class="recent-upload-info">
                       <div class="uploader">
