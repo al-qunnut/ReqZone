@@ -1,3 +1,103 @@
+<?php
+session_start();
+
+// Database connection
+$link = mysqli_connect('localhost', 'root', '', 'reqzone');
+
+if ($link === false) {
+    die("ERROR: Could not connect. " . mysqli_connect_error());
+}
+
+$name = "Guest";
+
+// Get user name from session
+if (isset($_SESSION['name'])) {
+    $name = $_SESSION['name'];
+}
+
+// Handle form submission
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $documentName = trim($_POST['project-name']);
+    $requestType = trim($_POST['constituency']);
+    $description = trim($_POST['about-project']);
+    $requestSender = $name;
+
+    // Validate input
+    if ($documentName && $requestType && $description) {
+        $stmt = mysqli_prepare(
+            $link,
+            "INSERT INTO fileInformation (`DocumentName`, `Request Type`, `Description`, `RequestSender`) VALUES (?, ?, ?, ?)"
+        );
+        mysqli_stmt_bind_param($stmt, "ssss", $documentName, $requestType, $description, $requestSender);
+
+        if (mysqli_stmt_execute($stmt)) {
+            echo "<script>alert('Data submitted successfully!');</script>";
+        } else {
+            echo "<script>alert('Error: " . mysqli_error($link) . "');</script>";
+        }
+        mysqli_stmt_close($stmt);
+    } else {
+        echo "<script>alert('Please fill in all fields.');</script>";
+    }
+}
+
+// Fetch dashboard statistics
+$stats = [
+    'submissions' => 0,
+    'responses' => 0,
+    'memos' => 0,
+    'pending' => 0
+];
+
+// Count total submissions
+$result = mysqli_query($link, "SELECT COUNT(*) as count FROM fileInformation");
+if ($result) {
+    $row = mysqli_fetch_assoc($result);
+    $stats['submissions'] = $row['count'];
+}
+
+// Count responses (assuming you have a status field or responses table)
+$result = mysqli_query($link, "SELECT COUNT(*) as count FROM fileInformation WHERE `Request Type` = 'Response'");
+if ($result) {
+    $row = mysqli_fetch_assoc($result);
+    $stats['responses'] = $row['count'];
+}
+
+// Count memos
+$result = mysqli_query($link, "SELECT COUNT(*) as count FROM fileInformation WHERE `Request Type` = 'Memo'");
+if ($result) {
+    $row = mysqli_fetch_assoc($result);
+    $stats['memos'] = $row['count'];
+}
+
+// Count pending requests (assuming new requests are pending)
+$result = mysqli_query($link, "SELECT COUNT(*) as count FROM fileInformation WHERE `Request Type` IN ('Payment', 'Job')");
+if ($result) {
+    $row = mysqli_fetch_assoc($result);
+    $stats['pending'] = $row['count'];
+}
+
+// Fetch recent activity
+$recentActivity = [];
+$result = mysqli_query($link, "SELECT * FROM fileInformation");
+if ($result) {
+    while ($row = mysqli_fetch_assoc($result)) {
+        $recentActivity[] = $row;
+    }
+}
+
+// Fetch all requests for the requests section
+$allRequests = [];
+$result = mysqli_query($link, "SELECT * FROM fileInformation ");
+if ($result) {
+    while ($row = mysqli_fetch_assoc($result)) {
+        $allRequests[] = $row;
+    }
+}
+
+mysqli_close($link);
+?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -16,7 +116,6 @@
         body {
             background: linear-gradient(135deg, #667eea 0%, #373047ff 100%);
             min-height: 100vh;
-
         }
 
         .dashboard-container {
@@ -65,6 +164,11 @@
             left: 40%;
             animation-duration: 18s;
             animation-delay: -10s;
+        }
+
+        @keyframes float {
+            0% { transform: translateY(100vh) rotate(0deg); }
+            100% { transform: translateY(-100px) rotate(360deg); }
         }
 
         /* Sidebar Styles */
@@ -203,6 +307,12 @@
             background: #ff4757;
             border-radius: 50%;
             animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.2); opacity: 0.7; }
+            100% { transform: scale(1); opacity: 1; }
         }
 
         /* Main Content */
@@ -403,8 +513,6 @@
             color: white;
             text-shadow: 0 2px 4px rgba(0,0,0,0.3);
             margin-bottom: 5px;
-            counter-reset: num;
-            animation: countUp 1s ease-out;
         }
 
         .stat-info p {
@@ -413,11 +521,6 @@
             font-weight: 600;
             text-transform: uppercase;
             letter-spacing: 0.5px;
-        }
-
-        @keyframes countUp {
-            from { transform: scale(0); }
-            to { transform: scale(1); }
         }
 
         /* Table Styles */
@@ -450,7 +553,7 @@
         }
 
         .data-table th {
-            background: rgba(36, 34, 56, 0.3)
+            background: rgba(36, 34, 56, 0.3);
             color: white;
             padding: 20px 15px;
             text-align: left;
@@ -500,7 +603,9 @@
             left: 100%;
         }
 
-        .status-badge.new {
+        .status-badge.new,
+        .status-badge.payment,
+        .status-badge.job {
             background: linear-gradient(135deg, #4ecdc4, #44bd87);
             color: white;
         }
@@ -544,8 +649,8 @@
             padding: 15px 20px;
             border-radius: 12px;
             border: 2px solid rgba(255,255,255,0.2);
-            background: rgba(0, 0, 0, 0.1);
-            color:  rgba(8, 15, 71, 1);
+            background: rgba(255, 255, 255, 0.9);
+            color: #333;
             font-size: 1rem;
             backdrop-filter: blur(10px);
             transition: all 0.3s ease;
@@ -553,7 +658,7 @@
 
         .form-group input::placeholder,
         .form-group textarea::placeholder {
-            color: rgba(255,255,255,0.6);
+            color: rgba(0,0,0,0.6);
         }
 
         .form-group input:focus,
@@ -561,7 +666,7 @@
         .form-group textarea:focus {
             outline: none;
             border-color: #ffeb3b;
-            background: rgba(255,255,255,0.15);
+            background: rgba(255,255,255,0.95);
             box-shadow: 0 0 0 4px rgba(255, 235, 59, 0.2);
             transform: translateY(-2px);
         }
@@ -606,6 +711,29 @@
         .submit-btn:active {
             transform: translateY(-1px) scale(1.02);
         }
+
+        /* Action Buttons */
+        .action-btn {
+            background: none;
+            border: none;
+            color: rgba(255,255,255,0.8);
+            font-size: 1rem;
+            cursor: pointer;
+            padding: 8px;
+            margin: 0 2px;
+            border-radius: 6px;
+            transition: all 0.3s ease;
+        }
+
+        .action-btn:hover {
+            background: rgba(255,255,255,0.1);
+            color: white;
+            transform: scale(1.1);
+        }
+
+        .view-btn:hover { color: #4ecdc4; }
+        .approve-btn:hover { color: #44bd87; }
+        .reject-btn:hover { color: #ff6b6b; }
 
         /* Mobile Responsive */
         .mobile-nav {
@@ -675,48 +803,6 @@
                 font-size: 2rem;
             }
         }
-
-        /* Loading Animation */
-        .loading {
-            display: inline-block;
-            width: 20px;
-            height: 20px;
-            border: 3px solid rgba(255,255,255,.3);
-            border-radius: 50%;
-            border-top-color: #fff;
-            animation: spin 1s ease-in-out infinite;
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-
-        /* Tooltip */
-        .tooltip {
-            position: relative;
-            cursor: help;
-        }
-
-        .tooltip::after {
-            content: attr(data-tooltip);
-            position: absolute;
-            bottom: 125%;
-            left: 50%;
-            transform: translateX(-50%);
-            background: rgba(0,0,0,0.8);
-            color: white;
-            padding: 8px 12px;
-            border-radius: 6px;
-            font-size: 0.8rem;
-            white-space: nowrap;
-            opacity: 0;
-            pointer-events: none;
-            transition: opacity 0.3s ease;
-        }
-
-        .tooltip:hover::after {
-            opacity: 1;
-        }
     </style>
 </head>
 <body>
@@ -745,7 +831,7 @@
                         <text x="90" y="42" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="rgba(255,255,255,0.8)">NCC Portal</text>
                     </svg>
                     <div class="user-info">
-                        <h3 id="userName">NCC Officer</h3>
+                        <h3><?php echo htmlspecialchars($name); ?></h3>
                         <div class="role-badge">Senior Administrator</div>
                     </div>
                 </div>
@@ -755,12 +841,13 @@
                 <div class="nav-item active" onclick="showSection('dashboard', this)">
                     <i class="fas fa-tachometer-alt"></i>
                     <span>Dashboard</span>
-                    <div class="notification-dot" style="display: none;"></div>
                 </div>
                 <div class="nav-item" onclick="showSection('requests', this)">
                     <i class="fas fa-inbox"></i>
                     <span>Incoming Requests</span>
+                    <?php if ($stats['pending'] > 0): ?>
                     <div class="notification-dot"></div>
+                    <?php endif; ?>
                 </div>
                 <div class="nav-item" onclick="showSection('memo', this)">
                     <i class="fas fa-paper-plane"></i>
@@ -769,10 +856,6 @@
                 <div class="nav-item" onclick="showSection('archive', this)">
                     <i class="fas fa-archive"></i>
                     <span>Archive</span>
-                </div>
-                <div class="nav-item" onclick="showSection('analytics', this)">
-                    <i class="fas fa-chart-line"></i>
-                    <span>Analytics</span>
                 </div>
                 <div class="nav-item" onclick="showSection('profile', this)">
                     <i class="fas fa-user-shield"></i>
@@ -788,9 +871,11 @@
                 <div class="section-header">
                     <h1 class="section-title">Dashboard Overview</h1>
                     <div class="header-actions">
-                        <div class="notification-bell tooltip" data-tooltip="3 new notifications" onclick="showNotifications()">
+                        <div class="notification-bell" onclick="showNotifications()">
                             <i class="fas fa-bell"></i>
-                            <div class="notification-count">3</div>
+                            <?php if ($stats['pending'] > 0): ?>
+                            <div class="notification-count"><?php echo $stats['pending']; ?></div>
+                            <?php endif; ?>
                         </div>
                     </div>
                 </div>
@@ -802,8 +887,8 @@
                                 <i class="fas fa-envelope-open-text"></i>
                             </div>
                             <div class="stat-info">
-                                <h3 id="submissionsCount">12</h3>
-                                <p>New Submissions</p>
+                                <h3><?php echo $stats['submissions']; ?></h3>
+                                <p>Total Submissions</p>
                             </div>
                         </div>
                     </div>
@@ -814,7 +899,7 @@
                                 <i class="fas fa-reply-all"></i>
                             </div>
                             <div class="stat-info">
-                                <h3 id="responsesCount">8</h3>
+                                <h3><?php echo $stats['responses']; ?></h3>
                                 <p>Responses Sent</p>
                             </div>
                         </div>
@@ -826,7 +911,7 @@
                                 <i class="fas fa-memo-circle-info"></i>
                             </div>
                             <div class="stat-info">
-                                <h3 id="memosCount">5</h3>
+                                <h3><?php echo $stats['memos']; ?></h3>
                                 <p>Internal Memos</p>
                             </div>
                         </div>
@@ -838,7 +923,7 @@
                                 <i class="fas fa-clock"></i>
                             </div>
                             <div class="stat-info">
-                                <h3 id="pendingCount">4</h3>
+                                <h3><?php echo $stats['pending']; ?></h3>
                                 <p>Pending Actions</p>
                             </div>
                         </div>
@@ -857,50 +942,36 @@
                                 <th>Type</th>
                                 <th>Date</th>
                                 <th>Status</th>
-                                <th>Priority</th>
                                 <th>Actions</th>
                             </tr>
                         </thead>
-                        <tbody id="recentActivity">
-                            <tr>
-                                <td>Diamond Heirs</td>
-                                <td>Q4 Payment Request</td>
-                                <td>Payment</td>
-                                <td>Dec 15, 2024</td>
-                                <td><span class="status-badge new">New</span></td>
-                                <td><span class="tooltip" data-tooltip="Requires immediate attention">High</span></td>
-                                <td>
-                                    <button onclick="viewDocument(1)" class="action-btn">
-                                        <i class="fas fa-eye"></i>
-                                    </button>
-                                </td>
-                            </tr>
-                            <tr>
-                                <td>Facility B</td>
-                                <td>IT Support Request</td>
-                                <td>Job</td>
-                                <td>Dec 14, 2024</td>
-                                <td><span class="status-badge reviewed">Reviewed</span></td>
-                                <td>Medium</td>
-                                <td>
-                                    <button onclick="viewDocument(2)" class="action-btn">
-                                        <i class="fas fa-eye"></i>
-                                    </button>
-                                </td>
-                            </tr>
-                            <tr>
-                                <td>Facility C</td>
-                                <td>Maintenance Contract</td>
-                                <td>Job</td>
-                                <td>Dec 13, 2024</td>
-                                <td><span class="status-badge responded">Responded</span></td>
-                                <td>Low</td>
-                                <td>
-                                    <button onclick="viewDocument(3)" class="action-btn">
-                                        <i class="fas fa-eye"></i>
-                                    </button>
-                                </td>
-                            </tr>
+                        <tbody>
+                            <?php if (empty($recentActivity)): ?>
+                                <tr>
+                                    <td colspan="6" style="text-align: center; padding: 40px; color: rgba(255,255,255,0.6);">
+                                        <i class="fas fa-inbox" style="font-size: 2rem; margin-bottom: 10px; display: block;"></i>
+                                        No requests found. Submit your first request below!
+                                    </td>
+                                </tr>
+                            <?php else: ?>
+                                <?php foreach(array_slice($recentActivity, 0, 5) as $activity): ?>
+                                <tr>
+                                    <td><?php echo htmlspecialchars($activity['RequestSender']); ?></td>
+                                    <td><?php echo htmlspecialchars($activity['DocumentName']); ?></td>
+                                    <td><span class="status-badge <?php echo strtolower($activity['Request Type']); ?>"><?php echo htmlspecialchars($activity['Request Type']); ?></span></td>
+                                    <td><?php echo isset($activity['created_at']) ? date('M d, Y', strtotime($activity['created_at'])) : 'Recent'; ?></td>
+                                    <td><span class="status-badge new">New</span></td>
+                                    <td>
+                                        <button onclick="viewDocument(<?php echo $activity['id']; ?>)" class="action-btn view-btn" title="View Document">
+                                            <i class="fas fa-eye"></i>
+                                        </button>
+                                        <button onclick="approveRequest(<?php echo $activity['id']; ?>)" class="action-btn approve-btn" title="Approve">
+                                            <i class="fas fa-check"></i>
+                                        </button>
+                                    </td>
+                                </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
                         </tbody>
                     </table>
                 </div>
@@ -911,85 +982,102 @@
                 <div class="section-header">
                     <h1 class="section-title">Incoming Requests</h1>
                     <div class="header-actions">
-                        <button class="filter-btn" onclick="toggleFilters()">
-                            <i class="fas fa-filter"></i> Filters
-                        </button>
-                        <button class="refresh-btn" onclick="refreshRequests()">
+                        <button class="action-btn" onclick="refreshPage()">
                             <i class="fas fa-sync-alt"></i> Refresh
                         </button>
                     </div>
                 </div>
 
-                <div class="filters-panel" id="filtersPanel" style="display: none;">
-                    <div class="filter-group">
-                        <select id="statusFilter" onchange="applyFilters()">
-                            <option value="">All Status</option>
-                            <option value="new">New</option>
-                            <option value="reviewed">Reviewed</option>
-                            <option value="responded">Responded</option>
-                        </select>
-                        <select id="typeFilter" onchange="applyFilters()">
-                            <option value="">All Types</option>
-                            <option value="payment">Payment</option>
-                            <option value="job">Job</option>
-                        </select>
-                        <input type="date" id="dateFilter" onchange="applyFilters()">
+                <div class="data-table-container">
+                    <div class="table-header">
+                        <h2>All Requests</h2>
                     </div>
-                </div>
-
-                <div class="requests-container" id="requestsContainer">
-                    <!-- Dynamic content will be loaded here -->
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>From</th>
+                                <th>Document</th>
+                                <th>Type</th>
+                                <th>Description</th>
+                                <th>Date</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if (empty($allRequests)): ?>
+                                <tr>
+                                    <td colspan="8" style="text-align: center; padding: 40px; color: rgba(255,255,255,0.6);">
+                                        <i class="fas fa-inbox" style="font-size: 2rem; margin-bottom: 10px; display: block;"></i>
+                                        No requests submitted yet.
+                                    </td>
+                                </tr>
+                            <?php else: ?>
+                                <?php foreach($allRequests as $request): ?>
+                                <tr>
+                                    <td>#<?php echo $request['id']; ?></td>
+                                    <td><?php echo htmlspecialchars($request['RequestSender']); ?></td>
+                                    <td><?php echo htmlspecialchars($request['DocumentName']); ?></td>
+                                    <td><span class="status-badge <?php echo strtolower($request['Request Type']); ?>"><?php echo htmlspecialchars($request['Request Type']); ?></span></td>
+                                    <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                                        <?php echo htmlspecialchars(substr($request['Description'], 0, 50)) . (strlen($request['Description']) > 50 ? '...' : ''); ?>
+                                    </td>
+                                    <td><?php echo isset($request['created_at']) ? date('M d, Y H:i', strtotime($request['created_at'])) : 'Recent'; ?></td>
+                                    <td><span class="status-badge new">Pending</span></td>
+                                    <td>
+                                        <button onclick="viewFullDocument(<?php echo $request['description']; ?>)" class="action-btn view-btn" title="View Full Details">
+                                            <i class="fas fa-eye"></i>
+                                        </button>
+                                        <button onclick="approveRequest(<?php echo $request['description']; ?>)" class="action-btn approve-btn" title="Approve">
+                                            <i class="fas fa-check"></i>
+                                        </button>
+                                        <button onclick="rejectRequest(<?php echo $request['description']; ?>)" class="action-btn reject-btn" title="Reject">
+                                            <i class="fas fa-times"></i>
+                                        </button>
+                                    </td>
+                                </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
                 </div>
             </div>
 
             <!-- Send Memo Section -->
             <div class="content-section" id="memo">
                 <div class="section-header">
-                    <h1 class="section-title">Send Internal Memo</h1>
+                    <h1 class="section-title">Submit New Request</h1>
                 </div>
 
                 <div class="form-container">
-                    <form id="memoForm" onsubmit="sendMemo(event)">
+                    <form method="POST" action="">
                         <div class="form-group">
-                            <label for="memoTitle">Memo Title</label>
-                            <input type="text" id="memoTitle" name="memo-title" placeholder="Enter memo title..." required>
+                            <label for="project-name">Document/Project Name</label>
+                            <input type="text" id="project-name" name="project-name" placeholder="Enter document or project name..." required>
                         </div>
 
                         <div class="form-group">
-                            <label for="recipient">Recipient</label>
-                            <select id="recipient" name="recipient" required>
-                                <option value="">Select recipient...</option>
-                                <option value="Diamond Heirs">Diamond Heirs Facility</option>
-                                <option value="Facility B">Facility B</option>
-                                <option value="Internal-CSL">Internal - Corporate Services</option>
-                                <option value="Internal-UHCSL">Internal - Unit Head CSL</option>
-                                <option value="Internal-ALL">All NCC Staff</option>
+                            <label for="constituency">Request Type</label>
+                            <select id="constituency" name="constituency" required>
+                                <option value="">Select request type...</option>
+                                <option value="Payment">Payment Request</option>
+                                <option value="Job">Job Request</option>
+                                <option value="Memo">Internal Memo</option>
+                                <option value="Maintenance">Maintenance</option>
+                                <option value="IT Support">IT Support</option>
+                                <option value="Other">Other</option>
                             </select>
                         </div>
 
                         <div class="form-group">
-                            <label for="priority">Priority Level</label>
-                            <select id="priority" name="priority">
-                                <option value="low">Low</option>
-                                <option value="medium" selected>Medium</option>
-                                <option value="high">High</option>
-                                <option value="urgent">Urgent</option>
-                            </select>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="memoMessage">Message</label>
-                            <textarea id="memoMessage" name="memo-message" rows="8" placeholder="Type your memo or response..." required></textarea>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="attachment">Attach Files (optional)</label>
-                            <input type="file" id="attachment" name="memo-attachment" multiple accept=".pdf,.doc,.docx,.jpg,.png">
+                            <label for="about-project">Description</label>
+                            <textarea id="about-project" name="about-project" rows="8" placeholder="Provide detailed description of your request..." required></textarea>
                         </div>
 
                         <button type="submit" class="submit-btn">
                             <i class="fas fa-paper-plane"></i>
-                            <span>Send Memo</span>
+                            <span>Submit Request</span>
                         </button>
                     </form>
                 </div>
@@ -1000,46 +1088,96 @@
                 <div class="section-header">
                     <h1 class="section-title">Document Archive</h1>
                     <div class="header-actions">
-                        <button class="search-btn" onclick="toggleSearch()">
-                            <i class="fas fa-search"></i> Search
-                        </button>
-                        <button class="export-btn" onclick="exportArchive()">
-                            <i class="fas fa-download"></i> Export
+                        <button class="action-btn" onclick="exportData()">
+                            <i class="fas fa-download"></i> Export Data
                         </button>
                     </div>
                 </div>
 
-                <div class="search-panel" id="searchPanel" style="display: none;">
-                    <input type="text" id="searchInput" placeholder="Search documents..." onkeyup="searchArchive()">
-                </div>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-card-content">
+                            <div class="stat-icon submissions">
+                                <i class="fas fa-file-alt"></i>
+                            </div>
+                            <div class="stat-info">
+                                <h3><?php echo $stats['submissions']; ?></h3>
+                                <p>Total Documents</p>
+                            </div>
+                        </div>
+                    </div>
 
-                <div class="archive-grid" id="archiveGrid">
-                    <!-- Archive items will be loaded here -->
-                </div>
-            </div>
+                    <div class="stat-card">
+                        <div class="stat-card-content">
+                            <div class="stat-icon responses">
+                                <i class="fas fa-percentage"></i>
+                            </div>
+                            <div class="stat-info">
+                                <h3><?php echo $stats['submissions'] > 0 ? round(($stats['responses'] / $stats['submissions']) * 100) : 0; ?>%</h3>
+                                <p>Processing Rate</p>
+                            </div>
+                        </div>
+                    </div>
 
-            <!-- Analytics Section -->
-            <div class="content-section" id="analytics">
-                <div class="section-header">
-                    <h1 class="section-title">Analytics Dashboard</h1>
-                    <div class="header-actions">
-                        <select id="timeRange" onchange="updateCharts()">
-                            <option value="7">Last 7 days</option>
-                            <option value="30" selected>Last 30 days</option>
-                            <option value="90">Last 3 months</option>
-                        </select>
+                    <div class="stat-card">
+                        <div class="stat-card-content">
+                            <div class="stat-icon memos">
+                                <i class="fas fa-chart-line"></i>
+                            </div>
+                            <div class="stat-info">
+                                <h3><?php echo count($recentActivity); ?></h3>
+                                <p>Recent Activity</p>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
-                <div class="analytics-grid">
-                    <div class="chart-container">
-                        <h3>Request Trends</h3>
-                        <canvas id="requestChart"></canvas>
+                <div class="data-table-container">
+                    <div class="table-header">
+                        <h2>All Documents Archive</h2>
                     </div>
-                    <div class="chart-container">
-                        <h3>Response Times</h3>
-                        <canvas id="responseChart"></canvas>
-                    </div>
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Document Name</th>
+                                <th>Type</th>
+                                <th>Submitted By</th>
+                                <th>Date</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if (empty($allRequests)): ?>
+                                <tr>
+                                    <td colspan="7" style="text-align: center; padding: 40px; color: rgba(255,255,255,0.6);">
+                                        <i class="fas fa-archive" style="font-size: 2rem; margin-bottom: 10px; display: block;"></i>
+                                        No archived documents yet.
+                                    </td>
+                                </tr>
+                            <?php else: ?>
+                                <?php foreach($allRequests as $request): ?>
+                                <tr>
+                                    <td>#<?php echo $request['id']; ?></td>
+                                    <td><?php echo htmlspecialchars($request['DocumentName']); ?></td>
+                                    <td><span class="status-badge <?php echo strtolower($request['Request Type']); ?>"><?php echo htmlspecialchars($request['Request Type']); ?></span></td>
+                                    <td><?php echo htmlspecialchars($request['RequestSender']); ?></td>
+                                    <td><?php echo isset($request['created_at']) ? date('M d, Y', strtotime($request['created_at'])) : 'Recent'; ?></td>
+                                    <td><span class="status-badge new">Archived</span></td>
+                                    <td>
+                                        <button onclick="viewFullDocument(<?php echo $request['id']; ?>)" class="action-btn view-btn" title="View Document">
+                                            <i class="fas fa-eye"></i>
+                                        </button>
+                                        <button onclick="downloadDocument(<?php echo $request['id']; ?>)" class="action-btn" title="Download" style="color: #ffeb3b;">
+                                            <i class="fas fa-download"></i>
+                                        </button>
+                                    </td>
+                                </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
                 </div>
             </div>
 
@@ -1055,21 +1193,18 @@
                             <div class="avatar-container">
                                 <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 120 120'%3E%3Ccircle cx='60' cy='60' r='60' fill='%23667eea'/%3E%3Ccircle cx='60' cy='45' r='20' fill='%23fff'/%3E%3Cpath d='M20 100 Q20 75 60 75 Q100 75 100 100 Z' fill='%23fff'/%3E%3C/svg%3E" 
                                      alt="Profile Picture" id="profileImage">
-                                <button class="edit-avatar-btn" onclick="editAvatar()">
-                                    <i class="fas fa-camera"></i>
-                                </button>
                             </div>
                         </div>
 
                         <form id="profileForm" onsubmit="updateProfile(event)">
                             <div class="form-group">
                                 <label for="fullName">Full Name</label>
-                                <input type="text" id="fullName" value="John Smith" required>
+                                <input type="text" id="fullName" value="<?php echo htmlspecialchars($name); ?>" required>
                             </div>
 
                             <div class="form-group">
                                 <label for="email">Email Address</label>
-                                <input type="email" id="email" value="john.smith@ncc.gov.ng" required>
+                                <input type="email" id="email" value="<?php echo strtolower(str_replace(' ', '.', $name)); ?>@ncc.gov.ng" required>
                             </div>
 
                             <div class="form-group">
@@ -1080,16 +1215,6 @@
                             <div class="form-group">
                                 <label for="position">Position</label>
                                 <input type="text" id="position" value="Senior Administrator" readonly>
-                            </div>
-
-                            <div class="form-group">
-                                <label for="newPassword">New Password</label>
-                                <input type="password" id="newPassword" placeholder="Leave blank to keep current password">
-                            </div>
-
-                            <div class="form-group">
-                                <label for="confirmPassword">Confirm New Password</label>
-                                <input type="password" id="confirmPassword" placeholder="Confirm new password">
                             </div>
 
                             <button type="submit" class="submit-btn">
@@ -1103,53 +1228,35 @@
         </div>
     </div>
 
+    <!-- Modal for viewing full document details -->
+    <div id="documentModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Document Details</h2>
+                <span class="close" onclick="closeModal()">&times;</span>
+            </div>
+            <div class="modal-body" id="modalBody">
+                <!-- Dynamic content will be loaded here -->
+            </div>
+        </div>
+    </div>
+
     <script>
         // Global variables
         let currentUser = {
-            name: 'John Smith',
+            name: '<?php echo addslashes($name); ?>',
             role: 'Senior Administrator',
             department: 'Corporate Services LGZO'
         };
 
-        let requestsData = [
-            {
-                id: 1,
-                from: 'Diamond Heirs',
-                document: 'Q4 Payment Request',
-                type: 'Payment',
-                date: '2024-12-15',
-                status: 'new',
-                priority: 'high',
-                description: 'Quarterly payment request for facility management services.'
-            },
-            {
-                id: 2,
-                from: 'Facility B',
-                document: 'IT Support Request',
-                type: 'Job',
-                date: '2024-12-14',
-                status: 'reviewed',
-                priority: 'medium',
-                description: 'Request for IT infrastructure support and maintenance.'
-            },
-            {
-                id: 3,
-                from: 'Facility C',
-                document: 'Maintenance Contract',
-                type: 'Job',
-                date: '2024-12-13',
-                status: 'responded',
-                priority: 'low',
-                description: 'Annual maintenance contract renewal request.'
-            }
-        ];
+        // Database requests data from PHP
+        let requestsData = <?php echo json_encode($allRequests); ?>;
+        let statsData = <?php echo json_encode($stats); ?>;
 
         // Initialize dashboard
         document.addEventListener('DOMContentLoaded', function() {
             initializeDashboard();
-            animateCounters();
-            loadRequests();
-            loadArchive();
+            updateNotificationDot();
         });
 
         // Navigation functions
@@ -1174,19 +1281,6 @@
 
             // Close mobile sidebar
             document.getElementById('sidebar').classList.remove('open');
-
-            // Load section-specific data
-            switch(sectionId) {
-                case 'requests':
-                    loadRequests();
-                    break;
-                case 'archive':
-                    loadArchive();
-                    break;
-                case 'analytics':
-                    loadAnalytics();
-                    break;
-            }
         }
 
         // Mobile sidebar toggle
@@ -1196,160 +1290,101 @@
 
         // Initialize dashboard
         function initializeDashboard() {
-            document.getElementById('userName').textContent = currentUser.name;
             updateDateTime();
-            setInterval(updateDateTime, 1000);
+            setInterval(updateDateTime, 60000); // Update every minute
         }
 
         // Update date and time
         function updateDateTime() {
             const now = new Date();
-            const options = { 
-                weekday: 'long', 
-                year: 'numeric', 
-                month: 'long', 
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit'
-            };
-            // You can add a date/time display element if needed
+            console.log('Dashboard updated at:', now.toLocaleString());
         }
 
-        // Animate counters
-        function animateCounters() {
-            const counters = ['submissionsCount', 'responsesCount', 'memosCount', 'pendingCount'];
-            const values = [12, 8, 5, 4];
-
-            counters.forEach((id, index) => {
-                animateCounter(id, values[index]);
+        // Update notification dot based on pending requests
+        function updateNotificationDot() {
+            const pendingCount = statsData.pending;
+            const notificationDots = document.querySelectorAll('.notification-dot');
+            
+            notificationDots.forEach(dot => {
+                if (pendingCount > 0) {
+                    dot.style.display = 'block';
+                } else {
+                    dot.style.display = 'none';
+                }
             });
         }
 
-        function animateCounter(elementId, targetValue) {
-            const element = document.getElementById(elementId);
-            let currentValue = 0;
-            const increment = targetValue / 30;
-            
-            const timer = setInterval(() => {
-                currentValue += increment;
-                if (currentValue >= targetValue) {
-                    element.textContent = targetValue;
-                    clearInterval(timer);
-                } else {
-                    element.textContent = Math.floor(currentValue);
-                }
-            }, 50);
-        }
-
-        // Load requests
-        function loadRequests() {
-            const container = document.getElementById('requestsContainer');
-            
-            container.innerHTML = `
-                <div class="data-table-container">
-                    <table class="data-table">
-                        <thead>
-                            <tr>
-                                <th>From</th>
-                                <th>Document</th>
-                                <th>Type</th>
-                                <th>Date</th>
-                                <th>Priority</th>
-                                <th>Status</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${requestsData.map(request => `
-                                <tr>
-                                    <td>${request.from}</td>
-                                    <td>${request.document}</td>
-                                    <td>${request.type}</td>
-                                    <td>${formatDate(request.date)}</td>
-                                    <td><span class="priority-${request.priority}">${request.priority.toUpperCase()}</span></td>
-                                    <td><span class="status-badge ${request.status}">${request.status.toUpperCase()}</span></td>
-                                    <td>
-                                        <button onclick="viewDocument(${request.id})" class="action-btn view-btn" title="View Document">
-                                            <i class="fas fa-eye"></i>
-                                        </button>
-                                        <button onclick="approveRequest(${request.id})" class="action-btn approve-btn" title="Approve">
-                                            <i class="fas fa-check"></i>
-                                        </button>
-                                        <button onclick="rejectRequest(${request.id})" class="action-btn reject-btn" title="Reject">
-                                            <i class="fas fa-times"></i>
-                                        </button>
-                                    </td>
-                                </tr>
-                            `).join('')}
-                        </tbody>
-                    </table>
-                </div>
-            `;
-        }
-
-        // Send memo
-        function sendMemo(event) {
-            event.preventDefault();
-            
-            const form = event.target;
-            const submitBtn = form.querySelector('.submit-btn');
-            const originalContent = submitBtn.innerHTML;
-            
-            // Show loading state
-            submitBtn.innerHTML = '<div class="loading"></div> Sending...';
-            submitBtn.disabled = true;
-            
-            // Simulate API call
-            setTimeout(() => {
-                showNotification('Memo sent successfully!', 'success');
-                form.reset();
-                submitBtn.innerHTML = originalContent;
-                submitBtn.disabled = false;
-                
-                // Update memo count
-                const memoCount = document.getElementById('memosCount');
-                memoCount.textContent = parseInt(memoCount.textContent) + 1;
-            }, 2000);
-        }
-
-        // Load archive
-        function loadArchive() {
-            const grid = document.getElementById('archiveGrid');
-            
-            grid.innerHTML = `
-                <div class="archive-stats">
-                    <div class="archive-stat">
-                        <h3>247</h3>
-                        <p>Total Documents</p>
+        // View full document details
+        function viewFullDocument(id) {
+            const request = requestsData.find(r => r.id == id);
+            if (request) {
+                document.getElementById('modalBody').innerHTML = `
+                    <div class="document-details">
+                        <div class="detail-row">
+                            <strong>Document ID:</strong> #${request.id}
+                        </div>
+                        <div class="detail-row">
+                            <strong>Document Name:</strong> ${request.DocumentName}
+                        </div>
+                        <div class="detail-row">
+                            <strong>Request Type:</strong> <span class="status-badge ${request['Request Type'].toLowerCase()}">${request['Request Type']}</span>
+                        </div>
+                        <div class="detail-row">
+                            <strong>Submitted By:</strong> ${request.RequestSender}
+                        </div>
+                        <div class="detail-row">
+                            <strong>Description:</strong>
+                            <div class="description-text">${request.Description}</div>
+                        </div>
+                        <div class="detail-row">
+                            <strong>Date Submitted:</strong> ${request.created_at ? new Date(request.created_at).toLocaleString() : 'Recent'}
+                        </div>
                     </div>
-                    <div class="archive-stat">
-                        <h3>89%</h3>
-                        <p>Processing Rate</p>
+                    <div class="modal-actions">
+                        <button onclick="approveRequest(${request.id})" class="submit-btn" style="margin-right: 10px;">
+                            <i class="fas fa-check"></i> Approve
+                        </button>
+                        <button onclick="rejectRequest(${request.id})" class="submit-btn" style="background: linear-gradient(135deg, #ff6b6b, #ee5a24);">
+                            <i class="fas fa-times"></i> Reject
+                        </button>
                     </div>
-                    <div class="archive-stat">
-                        <h3>2.3 days</h3>
-                        <p>Avg Response Time</p>
-                    </div>
-                </div>
-                <div class="archive-message">
-                    <i class="fas fa-archive" style="font-size: 3rem; color: rgba(255,255,255,0.3); margin-bottom: 20px;"></i>
-                    <h3>Archive Management</h3>
-                    <p>Complete document history and processing analytics will be displayed here.</p>
-                </div>
-            `;
+                `;
+                document.getElementById('documentModal').style.display = 'block';
+            }
         }
 
-        // Utility functions
-        function formatDate(dateString) {
-            const options = { year: 'numeric', month: 'short', day: 'numeric' };
-            return new Date(dateString).toLocaleDateString('en-US', options);
+        // View document (simplified version)
+        function viewDocument(id) {
+            viewFullDocument(id);
         }
 
+        // Close modal
+        function closeModal() {
+            document.getElementById('documentModal').style.display = 'none';
+        }
+
+        // Approve request
+        function approveRequest(id) {
+            if (confirm('Are you sure you want to approve this request?')) {
+                showNotification(`Request #${id} has been approved successfully!`, 'success');
+                closeModal();
+            }
+        }
+
+        // Reject request
+        function rejectRequest(id) {
+            if (confirm('Are you sure you want to reject this request?')) {
+                showNotification(`Request #${id} has been rejected.`, 'info');
+                closeModal();
+            }
+        }
+
+        // Show notification
         function showNotification(message, type = 'info') {
             const notification = document.createElement('div');
             notification.className = `notification notification-${type}`;
             notification.innerHTML = `
-                <i class="fas fa-${type === 'success' ? 'check-circle' : 'info-circle'}"></i>
+                <i class="fas fa-${type === 'success' ? 'check-circle' : type === 'error' ? 'exclamation-circle' : 'info-circle'}"></i>
                 <span>${message}</span>
                 <button onclick="this.parentElement.remove()"><i class="fas fa-times"></i></button>
             `;
@@ -1364,102 +1399,41 @@
             }, 5000);
         }
 
-        // Action functions
-        function viewDocument(id) {
-            showNotification(`Opening document #${id}...`, 'info');
-        }
-
-        function approveRequest(id) {
-            if (confirm('Are you sure you want to approve this request?')) {
-                showNotification(`Request #${id} approved successfully!`, 'success');
-                updateRequestStatus(id, 'approved');
+        // Show notifications
+        function showNotifications() {
+            const pendingCount = statsData.pending;
+            if (pendingCount > 0) {
+                showNotification(`You have ${pendingCount} pending request${pendingCount > 1 ? 's' : ''} requiring attention.`, 'info');
+            } else {
+                showNotification('No new notifications.', 'info');
             }
         }
 
-        function rejectRequest(id) {
-            if (confirm('Are you sure you want to reject this request?')) {
-                showNotification(`Request #${id} rejected.`, 'info');
-                updateRequestStatus(id, 'rejected');
-            }
+        // Refresh page
+        function refreshPage() {
+            location.reload();
         }
 
-        function updateRequestStatus(id, status) {
-            const request = requestsData.find(r => r.id === id);
-            if (request) {
-                request.status = status;
-                loadRequests();
-            }
-        }
-
-        // Filter and search functions
-        function toggleFilters() {
-            const panel = document.getElementById('filtersPanel');
-            panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
-        }
-
-        function toggleSearch() {
-            const panel = document.getElementById('searchPanel');
-            panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
-            if (panel.style.display === 'block') {
-                document.getElementById('searchInput').focus();
-            }
-        }
-
-        function applyFilters() {
-            const statusFilter = document.getElementById('statusFilter').value;
-            const typeFilter = document.getElementById('typeFilter').value;
-            const dateFilter = document.getElementById('dateFilter').value;
-            
-            // Filter logic would go here
-            showNotification('Filters applied', 'info');
-        }
-
-        function searchArchive() {
-            const query = document.getElementById('searchInput').value.toLowerCase();
-            // Search logic would go here
-            console.log('Searching for:', query);
-        }
-
-        function refreshRequests() {
-            const btn = event.target.closest('.refresh-btn');
-            const icon = btn.querySelector('i');
-            
-            icon.classList.add('fa-spin');
-            
+        // Export data
+        function exportData() {
+            showNotification('Preparing data export...', 'info');
             setTimeout(() => {
-                icon.classList.remove('fa-spin');
-                showNotification('Requests refreshed', 'success');
-                loadRequests();
-            }, 1500);
+                showNotification('Data export completed successfully!', 'success');
+            }, 2000);
         }
 
-        // Profile functions
-        function editAvatar() {
-            const input = document.createElement('input');
-            input.type = 'file';
-            input.accept = 'image/*';
-            input.onchange = function(e) {
-                const file = e.target.files[0];
-                if (file) {
-                    const reader = new FileReader();
-                    reader.onload = function(e) {
-                        document.getElementById('profileImage').src = e.target.result;
-                        showNotification('Profile picture updated!', 'success');
-                    };
-                    reader.readAsDataURL(file);
-                }
-            };
-            input.click();
+        // Download document
+        function downloadDocument(id) {
+            showNotification(`Preparing download for document #${id}...`, 'info');
         }
 
+        // Update profile
         function updateProfile(event) {
             event.preventDefault();
-            
-            const form = event.target;
-            const submitBtn = form.querySelector('.submit-btn');
+            const submitBtn = event.target.querySelector('.submit-btn');
             const originalContent = submitBtn.innerHTML;
             
-            submitBtn.innerHTML = '<div class="loading"></div> Saving...';
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
             submitBtn.disabled = true;
             
             setTimeout(() => {
@@ -1469,17 +1443,12 @@
             }, 1500);
         }
 
-        // Export function
-        function exportArchive() {
-            showNotification('Preparing export...', 'info');
-            setTimeout(() => {
-                showNotification('Archive exported successfully!', 'success');
-            }, 2000);
-        }
-
-        // Notifications
-        function showNotifications() {
-            showNotification('3 new requests require your attention', 'info');
+        // Close modal when clicking outside
+        window.onclick = function(event) {
+            const modal = document.getElementById('documentModal');
+            if (event.target === modal) {
+                modal.style.display = 'none';
+            }
         }
 
         // Close sidebar when clicking outside on mobile
@@ -1495,6 +1464,7 @@
             }
         });
     </script>
+
 
     <style>
         /* Additional styles for new functionality */
