@@ -1,6 +1,12 @@
 <?php
 session_start();
 
+// Check if the user is logged in and is an NCC user
+if (!isset($_SESSION["loggedin"]) || $_SESSION["loggedin"] !== true || $_SESSION["userCategory"] !== "NCC") {
+    header("location: ../index.php");
+    exit;
+}
+
 // Database connection
 $link = mysqli_connect('localhost', 'root', '', 'reqzone');
 
@@ -8,7 +14,30 @@ if ($link === false) {
     die("ERROR: Could not connect. " . mysqli_connect_error());
 }
 
-$name = "Guest";
+
+// Initialize user data from session
+$user_data = [
+    'id' => $_SESSION['id'] ?? '',
+    'name' => $_SESSION['name'] ?? 'Guest',
+    'email' => $_SESSION['email'] ?? '',
+    'userCategory' => $_SESSION['userCategory'] ?? 'NCC',
+    'userGroup' => $_SESSION['userGroup'] ?? '',
+    'role' => $_SESSION['role'] ?? 'NCC Staff'
+];
+
+// Define role hierarchy and permissions
+$role_hierarchy = [
+    'EVC' => ['level' => 7, 'name' => 'CEO/Executive Vice Chairman', 'can_approve' => true, 'can_view_all' => true],
+    'DCSH' => ['level' => 6, 'name' => 'Director - Corporate Services HO', 'can_approve' => true, 'can_view_all' => true],
+    'ZCL' => ['level' => 5, 'name' => 'Zonal Controller', 'can_approve' => true, 'can_view_all' => true],
+    'DCSL' => ['level' => 4, 'name' => 'Director - Corporate Services LGZO', 'can_approve' => true, 'can_view_all' => true],
+    'UHCSL' => ['level' => 3, 'name' => 'Unit Head - Corporate Services LGZO', 'can_approve' => true, 'can_view_all' => false],
+    'CSL' => ['level' => 2, 'name' => 'Corporate Services Staff', 'can_approve' => false, 'can_view_all' => false],
+    'PH' => ['level' => 4, 'name' => 'Procurement Head', 'can_approve' => true, 'can_view_all' => false],
+    'FH' => ['level' => 4, 'name' => 'Finance Head', 'can_approve' => true, 'can_view_all' => false]
+];
+
+$current_user_permissions = $role_hierarchy[$user_data['userGroup']] ?? ['level' => 1, 'name' => 'Staff', 'can_approve' => false, 'can_view_all' => false];
 
 // Get user name from session
 if (isset($_SESSION['name'])) {
@@ -831,11 +860,14 @@ mysqli_close($link);
                         <text x="90" y="42" font-family="Arial, sans-serif" font-size="8" text-anchor="middle" fill="rgba(255,255,255,0.8)">NCC Portal</text>
                     </svg>
                     <div class="user-info">
-                        <h3><?php echo htmlspecialchars($name); ?></h3>
-                        <div class="role-badge">Senior Administrator</div>
+                        <h3><?php echo htmlspecialchars($user_data['name']); ?></h3>
+                        <div class="role-badge"><?php echo htmlspecialchars($user_data['role']); ?></div>
+                        <div class="department-badge"><?php echo htmlspecialchars($user_data['userGroup']); ?> - Level <?php echo $current_user_permissions['level']; ?></div>
+
                     </div>
                 </div>
             </div>
+
 
             <nav class="sidebar-nav">
                 <div class="nav-item active" onclick="showSection('dashboard', this)">
@@ -959,7 +991,7 @@ mysqli_close($link);
                                     <td><?php echo htmlspecialchars($activity['RequestSender']); ?></td>
                                     <td><?php echo htmlspecialchars($activity['DocumentName']); ?></td>
                                     <td><span class="status-badge <?php echo strtolower($activity['Request Type']); ?>"><?php echo htmlspecialchars($activity['Request Type']); ?></span></td>
-                                    <td><?php echo isset($activity['created_at']) ? date('M d, Y', strtotime($activity['created_at'])) : 'Recent'; ?></td>
+                                    <td><?php echo  htmlspecialchars($activity['UploadDate']); ?></td>
                                     <td><span class="status-badge new">New</span></td>
                                     <td>
                                         <button onclick="viewDocument(<?php echo $activity['id']; ?>)" class="action-btn view-btn" title="View Document">
@@ -1016,23 +1048,23 @@ mysqli_close($link);
                             <?php else: ?>
                                 <?php foreach($allRequests as $request): ?>
                                 <tr>
-                                    <td>#<?php echo $request['id']; ?></td>
+                                    <td><?php echo $request['id']; ?></td>
                                     <td><?php echo htmlspecialchars($request['RequestSender']); ?></td>
                                     <td><?php echo htmlspecialchars($request['DocumentName']); ?></td>
                                     <td><span class="status-badge <?php echo strtolower($request['Request Type']); ?>"><?php echo htmlspecialchars($request['Request Type']); ?></span></td>
                                     <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
                                         <?php echo htmlspecialchars(substr($request['Description'], 0, 50)) . (strlen($request['Description']) > 50 ? '...' : ''); ?>
                                     </td>
-                                    <td><?php echo isset($request['created_at']) ? date('M d, Y H:i', strtotime($request['created_at'])) : 'Recent'; ?></td>
+                                    <td><?php echo htmlspecialchars($request['UploadDate']) ; ?></td>
                                     <td><span class="status-badge new">Pending</span></td>
                                     <td>
-                                        <button onclick="viewFullDocument(<?php echo $request['description']; ?>)" class="action-btn view-btn" title="View Full Details">
+                                        <button onclick="viewFullDocument(<?php echo $request['id']; ?>)" class="action-btn view-btn" title="View Full Details">
                                             <i class="fas fa-eye"></i>
                                         </button>
-                                        <button onclick="approveRequest(<?php echo $request['description']; ?>)" class="action-btn approve-btn" title="Approve">
+                                        <button onclick="approveRequest(<?php echo $request['id']; ?>)" class="action-btn approve-btn" title="Approve">
                                             <i class="fas fa-check"></i>
                                         </button>
-                                        <button onclick="rejectRequest(<?php echo $request['description']; ?>)" class="action-btn reject-btn" title="Reject">
+                                        <button onclick="rejectRequest(<?php echo $request['id']; ?>)" class="action-btn reject-btn" title="Reject">
                                             <i class="fas fa-times"></i>
                                         </button>
                                     </td>
@@ -1091,8 +1123,76 @@ mysqli_close($link);
                         <button class="action-btn" onclick="exportData()">
                             <i class="fas fa-download"></i> Export Data
                         </button>
+                        <button class="action-btn" onclick="showFilter()">
+                            <i class="fas fa-search"></i> Search
+                        </button>
                     </div>
                 </div>
+
+                 <!-- Advanced Filters -->
+                <div class="filters-panel" id="filter" style="display: none; background: rgba(255,255,255,0.1); backdrop-filter: blur(10px); border-radius: 15px; padding: 25px; margin-bottom: 30px; border: 1px solid rgba(255,255,255,0.2);">
+                    <h3 style="color: white; margin-bottom: 20px; display: flex; align-items: center; gap: 10px;">
+                        <i class="fas fa-filter"></i> Advanced Search Filters
+                    </h3>
+                    
+                    <form method="GET" action="#" class="filter-form">
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 20px;">
+                            <div>
+                                <label style="color: white; display: block; margin-bottom: 8px; font-weight: 600;">
+                                    <i class="fas fa-user"></i> Name/Document
+                                </label>
+                                <input type="text" name="filter_name" placeholder="Search by name or document..." 
+                                       value="<?php echo htmlspecialchars($archive_filter_name); ?>" 
+                                       style="width: 100%; padding: 12px 15px; border: 1px solid rgba(255,255,255,0.3); border-radius: 8px; background: rgba(255,255,255,0.1); color: white; font-size: 1rem;">
+                            </div>
+                            
+                            <div>
+                                <label style="color: white; display: block; margin-bottom: 8px; font-weight: 600;">
+                                    <i class="fas fa-building"></i> Department/Source
+                                </label>
+                                <select name="filter_dept" style="width: 100%; padding: 12px 15px; border: 1px solid rgba(255,255,255,0.3); border-radius: 8px; background: rgba(255,255,255,0.1); color: white; font-size: 1rem;">
+                                    <option value="">All Departments</option>
+                                    <option value="facility" <?php echo ($archive_filter_dept == 'facility') ? 'selected' : ''; ?>>Facility Requests</option>
+                                    <option value="ncc" <?php echo ($archive_filter_dept == 'ncc') ? 'selected' : ''; ?>>Internal NCC</option>
+                                </select>
+                            </div>
+                            
+                            <div>
+                                <label style="color: white; display: block; margin-bottom: 8px; font-weight: 600;">
+                                    <i class="fas fa-tag"></i> Request Type
+                                </label>
+                                <select name="filter_type" style="width: 100%; padding: 12px 15px; border: 1px solid rgba(255,255,255,0.3); border-radius: 8px; background: rgba(255,255,255,0.1); color: white; font-size: 1rem;">
+                                    <option value="">All Types</option>
+                                    <option value="Payment" <?php echo ($archive_filter_type == 'Payment') ? 'selected' : ''; ?>>Payment</option>
+                                    <option value="Job" <?php echo ($archive_filter_type == 'Job') ? 'selected' : ''; ?>>Job</option>
+                                    <option value="Memo" <?php echo ($archive_filter_type == 'Memo') ? 'selected' : ''; ?>>Memo</option>
+                                    <option value="Maintenance" <?php echo ($archive_filter_type == 'Maintenance') ? 'selected' : ''; ?>>Maintenance</option>
+                                    <option value="IT Support" <?php echo ($archive_filter_type == 'IT Support') ? 'selected' : ''; ?>>IT Support</option>
+                                    <option value="Policy" <?php echo ($archive_filter_type == 'Policy') ? 'selected' : ''; ?>>Policy</option>
+                                </select>
+                            </div>
+                            
+                            <div>
+                                <label style="color: white; display: block; margin-bottom: 8px; font-weight: 600;">
+                                    <i class="fas fa-calendar"></i> Date Submitted
+                                </label>
+                                <input type="date" name="filter_date" 
+                                       value="<?php echo htmlspecialchars($archive_filter_date); ?>" 
+                                       style="width: 100%; padding: 12px 15px; border: 1px solid rgba(255,255,255,0.3); border-radius: 8px; background: rgba(255,255,255,0.1); color: white; font-size: 1rem;">
+                            </div>
+                        </div>
+                        
+                        <div style="display: flex; gap: 15px; justify-content: center;">
+                            <button type="submit" style="background: linear-gradient(135deg, #4ecdc4, #44bd87); color: white; border: none; padding: 12px 25px; border-radius: 25px; font-weight: 600; cursor: pointer; transition: all 0.3s ease;">
+                                <i class="fas fa-search"></i> Apply Filters
+                            </button>
+                            <a href="?#archive" style="background: rgba(255,255,255,0.2); color: white; border: none; padding: 12px 25px; border-radius: 25px; font-weight: 600; text-decoration: none; transition: all 0.3s ease; display: inline-flex; align-items: center; gap: 8px;">
+                                <i class="fas fa-times"></i> Clear Filters
+                            </a>
+                        </div>
+                    </form>
+                </div>
+
 
                 <div class="stats-grid">
                     <div class="stat-card">
@@ -1159,11 +1259,11 @@ mysqli_close($link);
                             <?php else: ?>
                                 <?php foreach($allRequests as $request): ?>
                                 <tr>
-                                    <td>#<?php echo $request['id']; ?></td>
+                                    <td><?php echo htmlspecialchars($request['id']); ?></td>
                                     <td><?php echo htmlspecialchars($request['DocumentName']); ?></td>
                                     <td><span class="status-badge <?php echo strtolower($request['Request Type']); ?>"><?php echo htmlspecialchars($request['Request Type']); ?></span></td>
                                     <td><?php echo htmlspecialchars($request['RequestSender']); ?></td>
-                                    <td><?php echo isset($request['created_at']) ? date('M d, Y', strtotime($request['created_at'])) : 'Recent'; ?></td>
+                                    <td><?php echo  htmlspecialchars($request['UploadDate']);  ; ?></td>
                                     <td><span class="status-badge new">Archived</span></td>
                                     <td>
                                         <button onclick="viewFullDocument(<?php echo $request['id']; ?>)" class="action-btn view-btn" title="View Document">
@@ -1420,6 +1520,10 @@ mysqli_close($link);
             setTimeout(() => {
                 showNotification('Data export completed successfully!', 'success');
             }, 2000);
+        }
+
+        function showFilter() {
+            document.getElementById('filter').style.display = 'block'
         }
 
         // Download document

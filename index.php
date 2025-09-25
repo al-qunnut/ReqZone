@@ -2,7 +2,6 @@
 // Initialize the session
 session_start();
  
- 
 define('DB_SERVER', 'localhost');
 define('DB_USERNAME', 'root');
 define('DB_PASSWORD', '');
@@ -37,10 +36,13 @@ if($_SERVER["REQUEST_METHOD"] == "POST"){
         $password = trim($_POST["password"]);
     }
     
+    // Get the submitted user type from form
+    $submitted_user_type = isset($_POST["user_type"]) ? trim($_POST["user_type"]) : "";
+    
     // Validate credentials
     if(empty($email_err) && empty($password_err)){
-        // Prepare a select statement
-        $sql = "SELECT email, password FROM requser WHERE email = ?";
+        // Prepare a select statement to get all user data
+        $sql = "SELECT name, email, password, userCategory, userGroup FROM requser WHERE email = ?";
         
         if($stmt = mysqli_prepare($link, $sql)){
             // Bind variables to the prepared statement as parameters
@@ -57,29 +59,74 @@ if($_SERVER["REQUEST_METHOD"] == "POST"){
                 // Check if email exists, if yes then verify password
                 if(mysqli_stmt_num_rows($stmt) == 1){                    
                     // Bind result variables
-                    mysqli_stmt_bind_result($stmt, $email, $hashed_password);
+                    mysqli_stmt_bind_result($stmt, $name, $email, $hashed_password, $userCategory, $userGroup);
+                    
                     if(mysqli_stmt_fetch($stmt)){
                         if(password_verify($password, $hashed_password)){
                             
-                            $stmt = $link->prepare("SELECT userCategory FROM requser WHERE email = ?");
-                            $stmt->bind_param("s", $email);
-                            $stmt->execute();
-                            $result = $stmt->get_result();
-                            
-                            if ($result && $row = $result->fetch_assoc()) {
-                                $category = $row['userCategory'];
-                            
-                                if ($category == 'Facility') {
-                                    // Store data in session variables
-                                    $_SESSION["loggedin"] = true;
-                                    $_SESSION["email"] = $email;
-                            
-                                    header("location: ./Pages/Facility.php");
+                            // STRICT USER TYPE VALIDATION
+                            // Check if the user is trying to login with the correct form
+                            if($submitted_user_type == "NCC" && $userCategory != "NCC") {
+                                $login_err = "This account is not registered as an NCC user. Please use the Facility login form.";
+                            } elseif($submitted_user_type == "Facility" && $userCategory != "Facility") {
+                                $login_err = "This account is not registered as a Facility user. Please use the NCC login form.";
+                            } else {
+                                // Password is correct and user type matches, start session
+                                session_regenerate_id();
+                                
+                                // Store data in session variables
+                                $_SESSION["loggedin"] = true;
+                                $_SESSION["id"] = $id;
+                                $_SESSION["name"] = $name;
+                                $_SESSION["email"] = $email;
+                                $_SESSION["userCategory"] = $userCategory;
+                                $_SESSION["userGroup"] = $userGroup;
+                                
+                                // Determine user role based on category and group
+                                $role = "User";
+                                if ($userCategory == 'NCC') {
+                                    // Define hierarchy for NCC users
+                                    switch($userGroup) {
+                                        case 'EVC':
+                                            $role = "CEO/Executive Vice Chairman";
+                                            break;
+                                        case 'DCSH':
+                                            $role = "Director - Corporate Services HO";
+                                            break;
+                                        case 'ZCL':
+                                            $role = "Zonal Controller";
+                                            break;
+                                        case 'DCSL':
+                                            $role = "Director - Corporate Services LGZO";
+                                            break;
+                                        case 'UHCSL':
+                                            $role = "Unit Head - Corporate Services LGZO";
+                                            break;
+                                        case 'CSL':
+                                            $role = "Corporate Services Staff";
+                                            break;
+                                        case 'PH':
+                                            $role = "Procurement Head";
+                                            break;
+                                        case 'FH':
+                                            $role = "Finance Head";
+                                            break;
+                                        default:
+                                            $role = "NCC Staff";
+                                    }
+                                } else if ($userCategory == 'Facility') {
+                                    $role = "Facility Manager";
                                 }
-                            else
-                            {
-                                header("location: ./Pages/NCC.php");
-                            }
+                                
+                                $_SESSION["role"] = $role;
+                                
+                                // Redirect user to appropriate dashboard based on category
+                                if ($userCategory == 'Facility') {
+                                    header("location: ./Pages/Facility.php");
+                                } else {
+                                    header("location: ./Pages/NCC.php");
+                                }
+                                exit();
                             }
                         } else{
                             // Password is not valid, display a generic error message
@@ -87,7 +134,7 @@ if($_SERVER["REQUEST_METHOD"] == "POST"){
                         }
                     }
                 } else{
-                    // email doesn't exist, display a generic error message
+                    // Email doesn't exist, display a generic error message
                     $login_err = "Invalid email or password.";
                 }
             } else{
@@ -102,7 +149,6 @@ if($_SERVER["REQUEST_METHOD"] == "POST"){
     // Close connection
     mysqli_close($link);
 }
-
 ?>
 
 <!DOCTYPE html>
@@ -110,8 +156,8 @@ if($_SERVER["REQUEST_METHOD"] == "POST"){
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
-     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <title>ReqZone - Login</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 </head>
 
 <body>
@@ -146,7 +192,7 @@ if($_SERVER["REQUEST_METHOD"] == "POST"){
 
      <?php 
         if(!empty($login_err)){
-            echo '<div class="alert alert-danger">' . $login_err . '</div>';
+            echo '<div class="alert alert-danger" style="background: rgba(255, 107, 107, 0.1); border: 1px solid #ff6b6b; color: #ff6b6b; padding: 15px; margin: 20px 0; border-radius: 8px; text-align: center;">' . $login_err . '</div>';
         }        
         ?>
 
@@ -155,40 +201,37 @@ if($_SERVER["REQUEST_METHOD"] == "POST"){
         <div class="login-forms">
             <!-- NCC Login Form -->
         <div id="NCC">
-      <form class="login-form"   id="nccForm" action="<?php echo htmlspecialchars($_SERVER["PHP_SELF"]); ?>" method="post">
+      <form class="login-form" id="nccForm" action="<?php echo htmlspecialchars($_SERVER["PHP_SELF"]); ?>" method="post">
                 <h2 class="form-title">NCC Officer Login</h2>
                 <p class="form-subtitle">Nigerian Communications Commission</p>
                 
-                
-                <div id="errorMessages"></div>
             <div>
             <div class="form-group">
-              <label htmlFor='email'>Email:</label>
+              <label for='email'>Email:</label>
                 <input placeholder='Enter your email...'
                        class= 'email <?php echo (!empty($email_err)) ? 'is-invalid' : ''; ?>'
                        type='email'
                        name='email'
                        id='email'
+                       value="<?php echo $email; ?>"
                        required/>
-                       <span class="invalid-feedback"><?php echo $email_err; ?></span>
+                       <span class="invalid-feedback" style="color: #ff6b6b; font-size: 0.9rem;"><?php echo $email_err; ?></span>
               </div>
               <div class="form-group">
-                <label htmlFor='password'>Password:</label>
+                <label for='password'>Password:</label>
                   <input placeholder='Enter your password'
                      type='password'
                      class="form-control <?php echo (!empty($password_err)) ? 'is-invalid' : ''; ?>"
                      name='password'
                      id='password'
-                     minLength={5}
-                     maxLength={15
                      required/>
-                     <span class="invalid-feedback"><?php echo $password_err; ?></span>
-                     <span>Forgotten Passord?</span>
+                     <span class="invalid-feedback" style="color: #ff6b6b; font-size: 0.9rem;"><?php echo $password_err; ?></span>
+                     <span style="color: #666; font-size: 0.9rem;">Forgotten Password?</span>
               </div>
 
               <input type="hidden" name="user_type" value="NCC">
               <button type="submit" class="login-btn">
-                    <a href='./Pages/NCC.php'> <i class="fas fa-sign-in-alt"></i> Login to Dashboard </a>
+                    <i class="fas fa-sign-in-alt"></i> Login to Dashboard
                 </button> 
               </div>
               <div class="signup-link">
@@ -202,31 +245,29 @@ if($_SERVER["REQUEST_METHOD"] == "POST"){
             
                 <h2 class="form-title">Facility Manager Login</h2>
                 <p class="form-subtitle">Diamond Heirs Facility</p>
-                <div id="errorMessages2"></div>
 
               <div class='Facility_form'>
             <div class="form-group">
-              <label htmlFor='email'>Email:</label>
+              <label for='email2'>Email:</label>
                 <input placeholder='Enter your email...'
                        class= '<?php echo (!empty($email_err)) ? 'is-invalid' : ''; ?>'
                        type='email'
                        name='email'
-                       id='email'
+                       id='email2'
+                       value="<?php echo $email; ?>"
                        required/>
-                       <span class="invalid-feedback"><?php echo $email_err; ?></span>
+                       <span class="invalid-feedback" style="color: #ff6b6b; font-size: 0.9rem;"><?php echo $email_err; ?></span>
               </div>
               <div class="form-group">
-                <label htmlFor='password'>Password:</label>
+                <label for='password2'>Password:</label>
                   <input placeholder='Enter your password'
                      type='password'
                      class="form-control <?php echo (!empty($password_err)) ? 'is-invalid' : ''; ?>"
                      name='password'
-                     id='password'
-                     minLength={5}
-                     maxLength={15}
+                     id='password2'
                      required/>
-                     <span class="invalid-feedback"><?php echo $password_err; ?></span>
-                     <span class="forgot-password">Forgotten Passord?</span>
+                     <span class="invalid-feedback" style="color: #ff6b6b; font-size: 0.9rem;"><?php echo $password_err; ?></span>
+                     <span class="forgot-password" style="color: #666; font-size: 0.9rem;">Forgotten Password?</span>
               </div>
               <input type="hidden" name="user_type" value="Facility">
                 <button type="submit" class="login-btn">
@@ -240,7 +281,6 @@ if($_SERVER["REQUEST_METHOD"] == "POST"){
        </div>
         </div>
     <script>
-
         function showLoginForm(type) {
             // Hide all forms
             document.getElementById('nccForm').classList.remove('active');
@@ -265,17 +305,14 @@ if($_SERVER["REQUEST_METHOD"] == "POST"){
             showLoginForm('facility');
         });
 
-        
         window.onload = function() {
-        // Handle URL parameters for showing specific forms
-        const urlParams = new URLSearchParams(window.location.search);
-        const formType = urlParams.get('type');
-        if (formType) {
-            showLoginForm(formType);
-        }
-       
-       };
-
+            // Handle URL parameters for showing specific forms
+            const urlParams = new URLSearchParams(window.location.search);
+            const formType = urlParams.get('type');
+            if (formType) {
+                showLoginForm(formType);
+            }
+        };
     </script>
 </body>
 </html>
