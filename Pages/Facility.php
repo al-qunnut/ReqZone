@@ -1,4 +1,3 @@
-
 <?php
 session_start();
 
@@ -17,15 +16,120 @@ if ($link === false) {
 // Initialize user data from session
 $user_data = [
     'id' => $_SESSION['id'] ?? '',
-    'name' => $_SESSION['name'] ?? 'Guest',
+    'name' => $_SESSION['name'] ?? '',
     'email' => $_SESSION['email'] ?? '',
     'userCategory' => $_SESSION['userCategory'] ?? 'Facility',
     'userGroup' => $_SESSION['userGroup'] ?? '',
     'role' => $_SESSION['role'] ?? 'Facility Manager'
 ];
 
-// Handle form submission
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+// Handle profile update
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_profile'])) {
+    $new_name = trim($_POST['profile_name']);
+    $new_email = trim($_POST['profile_email']);
+    $current_password = $_POST['current_password'] ?? '';
+    $new_password = $_POST['new_password'] ?? '';
+    $confirm_password = $_POST['confirm_password'] ?? '';
+    
+    $profile_update_success = false;
+    $profile_error_message = '';
+    
+    // Validate inputs
+    if (empty($new_name) || empty($new_email)) {
+        $profile_error_message = "Name and email are required.";
+    } elseif (!filter_var($new_email, FILTER_VALIDATE_EMAIL)) {
+        $profile_error_message = "Please enter a valid email address.";
+    } else {
+        // Check if email is being changed and if it conflicts
+        $email_conflict = false;
+        
+        // Only check email uniqueness if the email is actually being changed
+        if (strtolower(trim($new_email)) !== strtolower(trim($user_data['email']))) {
+            $stmt = mysqli_prepare($link, "SELECT id FROM requser WHERE email = ? AND id != ?");
+            mysqli_stmt_bind_param($stmt, "si", $new_email, intval($user_data['id']));
+            mysqli_stmt_execute($stmt);
+            $result = mysqli_stmt_get_result($stmt);
+            
+            if (mysqli_num_rows($result) > 0) {
+                $email_conflict = true;
+                $profile_error_message = "Email address is already in use by another user.";
+            }
+            mysqli_stmt_close($stmt);
+        }
+        
+        // Continue only if no email conflict
+        if (!$email_conflict) {
+            // Check if password change is requested
+            $password_change_requested = !empty($new_password) || !empty($confirm_password) || !empty($current_password);
+            
+            if ($password_change_requested) {
+                // Validate password change requirements
+                if (empty($current_password)) {
+                    $profile_error_message = "Current password is required to change password.";
+                } elseif (empty($new_password)) {
+                    $profile_error_message = "New password is required.";
+                } elseif ($new_password !== $confirm_password) {
+                    $profile_error_message = "New passwords do not match.";
+                } elseif (strlen($new_password) < 6) {
+                    $profile_error_message = "New password must be at least 6 characters long.";
+                } else {
+                    // Verify current password
+                    $stmt = mysqli_prepare($link, "SELECT password FROM requser WHERE id = ?");
+                    mysqli_stmt_bind_param($stmt, "i", intval($user_data['id']));
+                    mysqli_stmt_execute($stmt);
+                    $result = mysqli_stmt_get_result($stmt);
+                    $current_user = mysqli_fetch_assoc($result);
+                    
+                    if (!$current_user) {
+                        $profile_error_message = "User record not found.";
+                    } elseif (!password_verify($current_password, $current_user['password'])) {
+                        $profile_error_message = "Current password is incorrect.";
+                    } else {
+                        // Update with new password
+                        $hashed_new_password = password_hash($new_password, PASSWORD_DEFAULT);
+                        $stmt_update = mysqli_prepare($link, "UPDATE requser SET name = ?, email = ?, password = ? WHERE id = ?");
+                        mysqli_stmt_bind_param($stmt_update, "sssi", $new_name, $new_email, $hashed_new_password, intval($user_data['id']));
+                        
+                        if (mysqli_stmt_execute($stmt_update)) {
+                            $profile_update_success = true;
+                            $_SESSION['name'] = $new_name;
+                            $_SESSION['email'] = $new_email;
+                            $user_data['name'] = $new_name;
+                            $user_data['email'] = $new_email;
+                        } else {
+                            $profile_error_message = "Error updating profile: " . mysqli_error($link);
+                        }
+                        mysqli_stmt_close($stmt_update);
+                    }
+                    mysqli_stmt_close($stmt);
+                }
+            } else {
+                // Update without password change (name and/or email only)
+                $stmt = mysqli_prepare($link, "UPDATE requser SET name = ?, email = ? WHERE id = ?");
+                mysqli_stmt_bind_param($stmt, $new_name, $new_email, intval($user_data['id']));
+                
+                if (mysqli_stmt_execute($stmt)) {
+                    $affected_rows = mysqli_stmt_affected_rows($stmt);
+                    if ($affected_rows > 0) {
+                        $profile_update_success = true;
+                        $_SESSION['name'] = $new_name;
+                        $_SESSION['email'] = $new_email;
+                        $user_data['name'] = $new_name;
+                        $user_data['email'] = $new_email;
+                    } else {
+                        $profile_error_message = "No changes were made. The information may be the same as your current profile.";
+                    }
+                } else {
+                    $profile_error_message = "Error updating profile: " . mysqli_error($link);
+                }
+                mysqli_stmt_close($stmt);
+            }
+        }
+    }
+}
+
+// Handle form submission for requests
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['update_profile'])) {
     $documentName = trim($_POST['project-name']);
     $requestType = trim($_POST['constituency']);
     $description = trim($_POST['about-project']);
@@ -37,18 +141,81 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!in_array($requestType, $allowedTypes)) {
         $error_message = "Facility users can only submit Payment or Job requests.";
     } elseif ($documentName && $requestType && $description) {
-        $stmt = mysqli_prepare(
-            $link,
-            "INSERT INTO fileInformation (`DocumentName`, `Request Type`, `Description`, `RequestSender`, `SenderEmail`) VALUES (?, ?, ?, ?, ?)"
-        );
-        mysqli_stmt_bind_param($stmt, "sssss", $documentName, $requestType, $description, $requestSender, $user_data['email']);
-
-        if (mysqli_stmt_execute($stmt)) {
-            $success_message = "Request submitted successfully!";
-        } else {
-            $error_message = "Error: " . mysqli_error($link);
+        
+        // Handle file upload
+        $uploadedFiles = [];
+        $uploadDir = '../uploads/facility_documents/';
+        
+        // Create upload directory if it doesn't exist
+        if (!file_exists($uploadDir)) {
+            mkdir($uploadDir, 0755, true);
         }
-        mysqli_stmt_close($stmt);
+        
+        if (isset($_FILES['images']) && !empty($_FILES['images']['name'][0])) {
+            $allowedTypes_file = ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png'];
+            $maxFileSize = 5 * 1024 * 1024; // 5MB
+            
+            for ($i = 0; $i < count($_FILES['images']['name']); $i++) {
+                if ($_FILES['images']['error'][$i] === 0) {
+                    $fileName = $_FILES['images']['name'][$i];
+                    $fileTmpName = $_FILES['images']['tmp_name'][$i];
+                    $fileSize = $_FILES['images']['size'][$i];
+                    $fileExtension = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
+                    
+                    // Validate file
+                    if (!in_array($fileExtension, $allowedTypes_file)) {
+                        $error_message = "Invalid file type. Only PDF, DOC, DOCX, JPG, JPEG, PNG files are allowed.";
+                        break;
+                    }
+                    
+                    if ($fileSize > $maxFileSize) {
+                        $error_message = "File size too large. Maximum size is 5MB.";
+                        break;
+                    }
+                    
+                    // Generate unique filename
+                    $uniqueFileName = time() . '_' . $user_data['id'] . '_' . $i . '.' . $fileExtension;
+                    $uploadPath = $uploadDir . $uniqueFileName;
+                    
+                    if (move_uploaded_file($fileTmpName, $uploadPath)) {
+                        $uploadedFiles[] = [
+                            'original_name' => $fileName,
+                            'stored_name' => $uniqueFileName,
+                            'file_path' => $uploadPath,
+                            'file_type' => $fileExtension,
+                            'file_size' => $fileSize
+                        ];
+                    }
+                }
+            }
+        }
+        
+        // Only proceed if no file upload errors
+        if (!isset($error_message)) {
+            // Convert uploaded files to JSON for storage
+            $filesJson = !empty($uploadedFiles) ? json_encode($uploadedFiles) : null;
+            
+            // Insert into database
+            $stmt = mysqli_prepare(
+                $link,
+                "INSERT INTO fileInformation (`DocumentName`, `Request Type`, `Description`, `RequestSender`, `SenderEmail`, `UploadedFiles`, `UploadDate`) VALUES (?, ?, ?, ?, ?, ?, NOW())"
+            );
+            
+            $senderName = (string) $user_data['name'];
+            $senderEmail = (string) $user_data['email'];
+            
+            mysqli_stmt_bind_param($stmt, "ssssss", $documentName, $requestType, $description, $senderName, $senderEmail, $filesJson);
+
+            if (mysqli_stmt_execute($stmt)) {
+                $success_message = "Request submitted successfully!";
+                if (!empty($uploadedFiles)) {
+                    $success_message .= " " . count($uploadedFiles) . " file(s) uploaded.";
+                }
+            } else {
+                $error_message = "Error: " . mysqli_error($link);
+            }
+            mysqli_stmt_close($stmt);
+        }
     } else {
         $error_message = "Please fill in all fields.";
     }
@@ -60,12 +227,18 @@ $user_stats = ['job' => 0, 'payment' => 0, 'total' => 0];
 
 if (!empty($user_data['email'])) {
     // Get user's requests (only Payment and Job types)
-    $stmt = mysqli_prepare($link, "SELECT * FROM fileInformation WHERE SenderEmail = ? AND (`Request Type` = 'Payment' OR `Request Type` = 'Job') ORDER BY id DESC");
+    $stmt = mysqli_prepare($link, "SELECT * FROM fileInformation WHERE SenderEmail = ? AND (`Request Type` = 'Payment' OR `Request Type` = 'Job') ORDER BY UploadDate DESC");
     mysqli_stmt_bind_param($stmt, "s", $user_data['email']);
     mysqli_stmt_execute($stmt);
     $result = mysqli_stmt_get_result($stmt);
     
     while ($row = mysqli_fetch_assoc($result)) {
+        // Decode uploaded files JSON
+        if (!empty($row['UploadedFiles'])) {
+            $row['files'] = json_decode($row['UploadedFiles'], true);
+        } else {
+            $row['files'] = [];
+        }
         $user_requests[] = $row;
     }
     mysqli_stmt_close($stmt);
@@ -81,6 +254,17 @@ if (!empty($user_data['email'])) {
     }
 }
 
+// Helper function for formatting file sizes
+function formatBytes($bytes, $precision = 2) {
+    $units = array('B', 'KB', 'MB', 'GB', 'TB');
+    
+    for ($i = 0; $bytes > 1024; $i++) {
+        $bytes /= 1024;
+    }
+    
+    return round($bytes, $precision) . ' ' . $units[$i];
+}
+
 mysqli_close($link);
 ?>
 
@@ -91,858 +275,7 @@ mysqli_close($link);
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Facility Dashboard - ReqZone</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            font-family: 'Segoe UI', 'Inter', Arial, sans-serif;
-        }
-
-        body {
-            background: linear-gradient(135deg, #0835C8 0%, #001f4d 100%);
-            min-height: 100vh;
-        }
-
-        /* Animated Background */
-        .bg-animation {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            overflow: hidden;
-            z-index: -1;
-            pointer-events: none;
-        }
-
-        .floating-shape {
-            position: absolute;
-            background: rgba(255, 255, 255, 0.08);
-            border-radius: 50%;
-            animation: float 25s infinite linear;
-        }
-
-        .floating-shape:nth-child(1) {
-            width: 120px;
-            height: 120px;
-            left: 10%;
-            animation-duration: 20s;
-        }
-
-        .floating-shape:nth-child(2) {
-            width: 80px;
-            height: 80px;
-            left: 70%;
-            animation-duration: 15s;
-            animation-delay: -5s;
-        }
-
-        .floating-shape:nth-child(3) {
-            width: 100px;
-            height: 100px;
-            left: 40%;
-            animation-duration: 18s;
-            animation-delay: -10s;
-        }
-
-        @keyframes float {
-            0% { transform: translateY(100vh) rotate(0deg); opacity: 0; }
-            10% { opacity: 0.6; }
-            90% { opacity: 0.6; }
-            100% { transform: translateY(-100px) rotate(360deg); opacity: 0; }
-        }
-
-        .container {
-            display: flex;
-            min-height: 100vh;
-            position: relative;
-        }
-
-        /* Enhanced Sidebar */
-        .sidebar_box {
-            background: linear-gradient(160deg, rgba(8, 53, 200, 0.95) 80%, rgba(0, 31, 77, 0.95) 100%);
-            backdrop-filter: blur(20px);
-            color: #fff;
-            width: 280px;
-            min-width: 280px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            box-shadow: 4px 0 20px rgba(0,0,0,0.15);
-            padding: 0;
-            transition: all 0.3s ease;
-            z-index: 200;
-            border-right: 1px solid rgba(255,255,255,0.1);
-        }
-
-        .logo-section {
-            padding: 30px 20px;
-            text-align: center;
-            border-bottom: 1px solid rgba(255,255,255,0.1);
-            width: 100%;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .logo-section::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: -100%;
-            width: 100%;
-            height: 100%;
-            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
-            animation: shimmer 4s infinite;
-        }
-
-        @keyframes shimmer {
-            0% { left: -100%; }
-            100% { left: 100%; }
-        }
-
-        .logo {
-            width: 180px;
-            margin-bottom: 15px;
-            filter: brightness(0) invert(1) drop-shadow(0 2px 8px rgba(255,255,255,0.3));
-            transition: transform 0.3s ease;
-            position: relative;
-            z-index: 2;
-        }
-
-        .logo:hover {
-            transform: scale(1.05) rotate(1deg);
-        }
-
-        .user-welcome {
-            margin-top: 15px;
-            position: relative;
-            z-index: 2;
-        }
-
-        .user-welcome h3 {
-            font-size: 1.2rem;
-            font-weight: 700;
-            text-shadow: 0 2px 4px rgba(0,0,0,0.3);
-            margin-bottom: 8px;
-        }
-
-        .user-role {
-            background: rgba(255,255,255,0.15);
-            padding: 6px 14px;
-            border-radius: 20px;
-            font-size: 0.85rem;
-            margin-bottom: 5px;
-            display: inline-block;
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255,255,255,0.2);
-            font-weight: 500;
-        }
-
-        .user-department {
-            color: rgba(255,255,255,0.8);
-            font-size: 0.9rem;
-            font-weight: 500;
-        }
-
-        .sidebar-nav {
-            flex: 1;
-            padding: 30px 0;
-            width: 100%;
-        }
-
-        .nav-item {
-            display: flex;
-            align-items: center;
-            padding: 18px 30px;
-            color: rgba(255,255,255,0.85);
-            cursor: pointer;
-            transition: all 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
-            font-size: 1.1rem;
-            font-weight: 500;
-            position: relative;
-            overflow: hidden;
-            margin: 2px 0;
-        }
-
-        .nav-item::before {
-            content: '';
-            position: absolute;
-            left: 0;
-            top: 0;
-            width: 0;
-            height: 100%;
-            background: rgba(255,255,255,0.12);
-            transition: width 0.3s ease;
-            z-index: 1;
-        }
-
-        .nav-item:hover::before,
-        .nav-item.active::before {
-            width: 100%;
-        }
-
-        .nav-item:hover,
-        .nav-item.active {
-            color: white;
-            transform: translateX(8px) scale(1.02);
-            background: rgba(255,255,255,0.08);
-            border-radius: 12px;
-            box-shadow: inset 4px 0 0 #f4f6fa;
-        }
-
-        .nav-item i {
-            margin-right: 16px;
-            font-size: 1.4rem;
-            width: 28px;
-            transition: transform 0.3s ease;
-            z-index: 2;
-            position: relative;
-        }
-
-        .nav-item span {
-            z-index: 2;
-            position: relative;
-        }
-
-        .nav-item:hover i {
-            transform: scale(1.15) rotate(8deg);
-        }
-
-        /* Main Content Area */
-        .main-content {
-            flex: 1;
-            background: rgba(244, 246, 250, 0.95);
-            backdrop-filter: blur(20px);
-            border-radius: 25px 0 0 25px;
-            margin: 25px 25px 25px 0;
-            overflow: hidden;
-            position: relative;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
-        }
-
-        .content-section {
-            display: none;
-            padding: 40px;
-            height: calc(100vh - 50px);
-            overflow-y: auto;
-            scrollbar-width: thin;
-            scrollbar-color: rgba(8, 53, 200, 0.3) transparent;
-        }
-
-        .content-section::-webkit-scrollbar {
-            width: 6px;
-        }
-
-        .content-section::-webkit-scrollbar-track {
-            background: rgba(8, 53, 200, 0.05);
-            border-radius: 3px;
-        }
-
-        .content-section::-webkit-scrollbar-thumb {
-            background: rgba(8, 53, 200, 0.3);
-            border-radius: 3px;
-        }
-
-        .content-section.active {
-            display: block;
-            animation: slideInRight 0.5s ease;
-        }
-
-        @keyframes slideInRight {
-            0% { transform: translateX(30px); opacity: 0; }
-            100% { transform: translateX(0); opacity: 1; }
-        }
-
-        /* Dashboard Header */
-        .dashboard-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 30px;
-            padding: 20px 0;
-            border-bottom: 2px solid rgba(8, 53, 200, 0.1);
-        }
-
-        .welcome-section h1 {
-            font-size: 2.2rem;
-            font-weight: 700;
-            color: #0835C8;
-            margin-bottom: 8px;
-        }
-
-        .welcome-section .user-name {
-            color: #001f4d;
-            font-weight: 800;
-        }
-
-        .welcome-section p {
-            color: #666;
-            font-size: 1.1rem;
-        }
-
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 20px;
-        }
-
-        .notification-btn {
-            position: relative;
-            background: #0835C8;
-            color: white;
-            border: none;
-            padding: 12px;
-            border-radius: 12px;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            box-shadow: 0 4px 12px rgba(8, 53, 200, 0.3);
-        }
-
-        .notification-btn:hover {
-            background: #001f4d;
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(8, 53, 200, 0.4);
-        }
-
-        .notification-badge {
-            position: absolute;
-            top: -5px;
-            right: -5px;
-            background: #ff4757;
-            color: white;
-            border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 0.7rem;
-            font-weight: bold;
-        }
-
-        /* Logout Button */
-        .logout-btn {
-            background: linear-gradient(135deg, #ff6b6b, #ee5a24);
-            color: white;
-            border: none;
-            padding: 12px 20px;
-            border-radius: 25px;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            font-weight: 600;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(255, 107, 107, 0.4);
-        }
-
-        /* Stats Cards */
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 25px;
-            margin-bottom: 40px;
-        }
-
-        .stat-card {
-            background: white;
-            border-radius: 20px;
-            padding: 30px;
-            box-shadow: 0 4px 20px rgba(8, 53, 200, 0.08);
-            border: 1px solid rgba(8, 53, 200, 0.1);
-            transition: all 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
-            position: relative;
-            overflow: hidden;
-            cursor: pointer;
-        }
-
-        .stat-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: -100%;
-            width: 100%;
-            height: 100%;
-            background: linear-gradient(90deg, transparent, rgba(8, 53, 200, 0.03), transparent);
-            transition: left 0.5s ease;
-        }
-
-        .stat-card:hover::before {
-            left: 100%;
-        }
-
-        .stat-card:hover {
-            transform: translateY(-8px) scale(1.02);
-            box-shadow: 0 12px 40px rgba(8, 53, 200, 0.15);
-        }
-
-        .stat-card-content {
-            display: flex;
-            align-items: center;
-            gap: 20px;
-        }
-
-        .stat-icon {
-            width: 70px;
-            height: 70px;
-            border-radius: 16px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.8rem;
-            color: white;
-        }
-
-        .stat-icon.job {
-            background: linear-gradient(135deg, #0835C8, #001f4d);
-        }
-
-        .stat-icon.payment {
-            background: linear-gradient(135deg, #4ecdc4, #44bd87);
-        }
-
-        .stat-icon.total {
-            background: linear-gradient(135deg, #a55eea, #8b68ff);
-        }
-
-        .stat-info h3 {
-            font-size: 2.5rem;
-            font-weight: 800;
-            color: #001f4d;
-            margin-bottom: 5px;
-        }
-
-        .stat-info p {
-            color: #666;
-            font-size: 1rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        /* Form Styles */
-        .form-container {
-            background: white;
-            border-radius: 20px;
-            box-shadow: 0 8px 30px rgba(8, 53, 200, 0.1);
-            padding: 40px;
-            border: 1px solid rgba(8, 53, 200, 0.1);
-            max-width: 900px;
-            margin: 0 auto;
-        }
-
-        .form-header {
-            text-align: center;
-            margin-bottom: 40px;
-        }
-
-        .form-header h2 {
-            color: #0835C8;
-            font-size: 2.2rem;
-            font-weight: 700;
-            margin-bottom: 10px;
-        }
-
-        .form-header p {
-            color: #666;
-            font-size: 1.1rem;
-        }
-
-        .form-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 30px;
-            margin-bottom: 30px;
-        }
-
-        .form-group {
-            margin-bottom: 25px;
-        }
-
-        .form-group.full-width {
-            grid-column: 1 / -1;
-        }
-
-        .form-group label {
-            display: block;
-            color: #0835C8;
-            font-weight: 600;
-            margin-bottom: 10px;
-            font-size: 1.1rem;
-        }
-
-        .form-group input,
-        .form-group select,
-        .form-group textarea {
-            width: 100%;
-            padding: 15px 20px;
-            border-radius: 12px;
-            border: 2px solid rgba(8, 53, 200, 0.1);
-            background: #f7f7f7;
-            color: #333;
-            font-size: 1rem;
-            font-weight: 500;
-            transition: all 0.3s ease;
-        }
-
-        .form-group input::placeholder,
-        .form-group textarea::placeholder {
-            color: #999;
-        }
-
-        .form-group input:focus,
-        .form-group select:focus,
-        .form-group textarea:focus {
-            outline: none;
-            border-color: #0835C8;
-            background: white;
-            box-shadow: 0 0 0 4px rgba(8, 53, 200, 0.1);
-            transform: translateY(-2px);
-        }
-
-        .file-upload {
-            border: 2px dashed #0835C8;
-            border-radius: 12px;
-            padding: 40px 20px;
-            text-align: center;
-            background: #f9f9f9;
-            transition: all 0.3s ease;
-            cursor: pointer;
-        }
-
-        .file-upload:hover {
-            border-color: #001f4d;
-            background: #f4f6fa;
-        }
-
-        .file-upload i {
-            font-size: 3rem;
-            color: #0835C8;
-            margin-bottom: 15px;
-        }
-
-        .file-upload p {
-            color: #666;
-            font-size: 1.1rem;
-            margin-bottom: 10px;
-        }
-
-        .file-upload small {
-            color: #999;
-            font-size: 0.9rem;
-        }
-
-        .file-input {
-            display: none;
-        }
-
-        .submit-btn {
-            background: linear-gradient(90deg, #0835C8 60%, #001f4d 100%);
-            color: white;
-            border: none;
-            padding: 16px 40px;
-            border-radius: 50px;
-            font-size: 1.3rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            box-shadow: 0 6px 20px rgba(8, 53, 200, 0.3);
-            display: block;
-            margin: 30px auto 0;
-            min-width: 220px;
-        }
-
-        .submit-btn:hover {
-            background: linear-gradient(90deg, #001f4d 60%, #0835C8 100%);
-            transform: translateY(-3px);
-            box-shadow: 0 10px 30px rgba(8, 53, 200, 0.4);
-        }
-
-        .submit-btn:active {
-            transform: translateY(-1px);
-        }
-
-        /* Alert Messages */
-        .alert {
-            padding: 15px 20px;
-            margin: 20px 0;
-            border-radius: 10px;
-            font-weight: 500;
-        }
-
-        .alert.success {
-            background: rgba(68, 189, 135, 0.1);
-            border: 1px solid #44bd87;
-            color: #44bd87;
-        }
-
-        .alert.error {
-            background: rgba(255, 107, 107, 0.1);
-            border: 1px solid #ff6b6b;
-            color: #ff6b6b;
-        }
-
-        /* Tables */
-        .table-container {
-            background: white;
-            border-radius: 20px;
-            box-shadow: 0 8px 30px rgba(8, 53, 200, 0.1);
-            overflow: hidden;
-            border: 1px solid rgba(8, 53, 200, 0.1);
-        }
-
-        .table-header {
-            background: linear-gradient(135deg, #0835C8, #001f4d);
-            color: white;
-            padding: 25px 30px;
-        }
-
-        .table-header h2 {
-            font-size: 1.6rem;
-            font-weight: 700;
-            margin: 0;
-        }
-
-        .data-table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-
-        .data-table th {
-            background: #f8f9fa;
-            color: #0835C8;
-            padding: 20px 15px;
-            text-align: left;
-            font-weight: 600;
-            font-size: 1rem;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .data-table td {
-            padding: 18px 15px;
-            border-bottom: 1px solid rgba(8, 53, 200, 0.1);
-            color: #333;
-            font-weight: 500;
-        }
-
-        .data-table tr:hover td {
-            background: rgba(8, 53, 200, 0.02);
-        }
-
-        .status-btn {
-            border: none;
-            border-radius: 20px;
-            padding: 6px 16px;
-            font-size: 0.85rem;
-            font-weight: 600;
-            cursor: default;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-            transition: all 0.2s ease;
-        }
-
-        .status-btn.pending {
-            background: rgba(255, 167, 38, 0.1);
-            color: #ff7f00;
-            border: 1px solid #ff7f00;
-        }
-
-        .section-title {
-            color: #0835C8;
-            font-size: 2rem;
-            margin-bottom: 25px;
-            font-weight: 700;
-            position: relative;
-        }
-
-        .section-title::after {
-            content: '';
-            position: absolute;
-            bottom: -8px;
-            left: 0;
-            width: 60px;
-            height: 4px;
-            background: linear-gradient(90deg, #0835C8, #001f4d);
-            border-radius: 2px;
-        }
-
-        /* Recent Uploads Section */
-        .recent-uploads-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-            gap: 25px;
-        }
-
-        .upload-card {
-            background: white;
-            border-radius: 16px;
-            box-shadow: 0 4px 20px rgba(8, 53, 200, 0.08);
-            display: flex;
-            align-items: flex-start;
-            padding: 20px;
-            gap: 20px;
-            transition: all 0.3s ease;
-            border: 1px solid rgba(8, 53, 200, 0.1);
-            position: relative;
-            overflow: hidden;
-        }
-
-        .upload-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 4px;
-            height: 100%;
-            background: #0835C8;
-            transform: scaleY(0);
-            transition: transform 0.3s ease;
-        }
-
-        .upload-card:hover::before {
-            transform: scaleY(1);
-        }
-
-        .upload-card:hover {
-            transform: translateY(-4px);
-            box-shadow: 0 8px 30px rgba(8, 53, 200, 0.12);
-        }
-
-        .doc-preview img {
-            width: 80px;
-            height: 100px;
-            object-fit: cover;
-            border-radius: 8px;
-            background: #f4f6fa;
-            border: 1px solid rgba(8, 53, 200, 0.1);
-        }
-
-        .upload-info {
-            flex: 1;
-        }
-
-        .uploader {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            margin-bottom: 10px;
-        }
-
-        .uploader-pic {
-            width: 36px;
-            height: 36px;
-            border-radius: 50%;
-            background: #0835C8;
-            color: white;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: bold;
-        }
-
-        .uploader-name {
-            color: #0835C8;
-            font-weight: 600;
-            font-size: 1.1rem;
-        }
-
-        .doc-title {
-            font-size: 1.2rem;
-            font-weight: 700;
-            color: #001f4d;
-            margin-bottom: 4px;
-        }
-
-        .doc-type {
-            font-size: 1rem;
-            color: #0835C8;
-            font-weight: 600;
-            margin-bottom: 6px;
-        }
-
-        .doc-desc {
-            font-size: 0.95rem;
-            color: #666;
-            margin-bottom: 8px;
-            line-height: 1.4;
-        }
-
-        .doc-meta {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 15px;
-            margin-top: 8px;
-        }
-
-        .doc-date {
-            font-size: 0.9rem;
-            color: #0835C8;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            font-weight: 500;
-        }
-
-        /* Empty State */
-        .empty-state {
-            text-align: center;
-            padding: 60px 20px;
-            color: #666;
-        }
-
-        .empty-state i {
-            font-size: 4rem;
-            color: rgba(8, 53, 200, 0.3);
-            margin-bottom: 20px;
-        }
-
-        .empty-state h3 {
-            color: #0835C8;
-            font-size: 1.5rem;
-            margin-bottom: 10px;
-        }
-
-        .empty-state p {
-            font-size: 1.1rem;
-            line-height: 1.6;
-        }
-
-        /* Responsive Design */
-        @media (max-width: 768px) {
-            .container {
-                flex-direction: column;
-            }
-            
-            .sidebar_box {
-                display: none;
-            }
-            
-            .main-content {
-                margin: 0;
-                border-radius: 0;
-            }
-            
-            .content-section {
-                padding: 20px;
-            }
-            
-            .form-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr;
-            }
-        }
-    </style>
+    <link rel="stylesheet" href="../Styles/facility.css">
 </head>
 <body>
     <!-- Animated Background -->
@@ -1078,7 +411,51 @@ mysqli_close($link);
                             <?php foreach(array_slice($user_requests, 0, 6) as $request): ?>
                             <div class="upload-card">
                                 <div class="doc-preview">
-                                    <img src="../images/Letter.png" alt="Document Preview" />
+                                    <?php 
+                                    $previewImage = "../images/Letter.png"; // Default image
+                                    $hasImage = false;
+                                    
+                                    // Check if there are uploaded files
+                                    if (!empty($request['files'])) {
+                                        foreach($request['files'] as $file) {
+                                            // If it's an image file, use it as preview
+                                            if (in_array(strtolower($file['file_type']), ['jpg', 'jpeg', 'png'])) {
+                                                $previewImage = "../uploads/facility_documents/" . $file['stored_name'];
+                                                $hasImage = true;
+                                                break;
+                                            }
+                                        }
+                                        
+                                        // If no image found, show file type icon based on first file
+                                        if (!$hasImage && !empty($request['files'])) {
+                                            $firstFile = $request['files'][0];
+                                            $fileType = strtolower($firstFile['file_type']);
+                                            
+                                            // Use CSS background for file type icons instead of images
+                                            echo '<div class="file-type-icon file-type-' . $fileType . '">';
+                                            switch($fileType) {
+                                                case 'pdf':
+                                                    echo '<i class="fas fa-file-pdf"></i><span>PDF</span>';
+                                                    break;
+                                                case 'doc':
+                                                case 'docx':
+                                                    echo '<i class="fas fa-file-word"></i><span>DOC</span>';
+                                                    break;
+                                                default:
+                                                    echo '<i class="fas fa-file"></i><span>' . strtoupper($fileType) . '</span>';
+                                            }
+                                            echo '</div>';
+                                        } else if ($hasImage) {
+                                            echo '<img src="' . htmlspecialchars($previewImage) . '" alt="Document Preview" />';
+                                        } else {
+                                            echo '<img src="../images/Letter.png" alt="Document Preview" />';
+                                        }
+                                    } 
+                                    
+                                    if (!$hasImage && empty($request['files'])) {
+                                        echo '<img src="../images/Letter.png" alt="Document Preview" />';
+                                    }
+                                    ?>
                                 </div>
                                 <div class="upload-info">
                                     <div class="uploader">
@@ -1093,6 +470,11 @@ mysqli_close($link);
                                             <i class="fa-regular fa-calendar"></i> 
                                             <?php echo isset($request['UploadDate']) ? date('M d, Y', strtotime($request['UploadDate'])) : 'Recent'; ?>
                                         </span>
+                                        <?php if (!empty($request['files'])): ?>
+                                            <span class="doc-files">
+                                                <i class="fas fa-paperclip"></i> <?php echo count($request['files']); ?> file(s)
+                                            </span>
+                                        <?php endif; ?>
                                         <button class="status-btn pending">Pending</button>
                                     </div>
                                 </div>
@@ -1129,9 +511,10 @@ mysqli_close($link);
                             <div class="file-upload" onclick="document.getElementById('fileInput').click()">
                                 <i class="fas fa-cloud-upload-alt"></i>
                                 <p>Drag and drop your files here or click to browse</p>
-                                <small>Support for multiple files (PDF, DOC, DOCX, JPG, PNG)</small>
+                                <small>Support for multiple files (PDF, DOC, DOCX, JPG, PNG) - Max 5MB per file</small>
                             </div>
                             <input class="file-input" type="file" id="fileInput" name="images[]" multiple accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" style="display: none;" />
+                            <div class="uploaded-files-preview" id="filesPreview"></div>
                         </div>
 
                         <div class="form-grid">
@@ -1184,13 +567,14 @@ mysqli_close($link);
                                     <th>Document Name</th>
                                     <th>Request Type</th>
                                     <th>Description</th>
+                                    <th>Files</th>
                                     <th>Status</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 <?php foreach($user_requests as $request): ?>
                                 <tr>
-                                    <td><?php echo htmlspecialchars($request['UploadDate']); ?></td>
+                                    <td><?php echo htmlspecialchars(date('M d, Y', strtotime($request['UploadDate']))); ?></td>
                                     <td><?php echo htmlspecialchars($request['DocumentName']); ?></td>
                                     <td>
                                         <span class="status-btn <?php echo strtolower($request['Request Type']); ?>">
@@ -1200,6 +584,31 @@ mysqli_close($link);
                                     <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis;">
                                         <?php echo htmlspecialchars(substr($request['Description'], 0, 60)) . (strlen($request['Description']) > 60 ? '...' : ''); ?>
                                     </td>
+                                    <td class="files-column">
+                                        <?php if (!empty($request['files'])): ?>
+                                            <div class="file-list">
+                                                <?php foreach($request['files'] as $index => $file): ?>
+                                                    <div class="file-item">
+                                                        <i class="fas fa-file file-icon"></i>
+                                                        <div class="file-info">
+                                                            <div class="file-name"><?php echo htmlspecialchars($file['original_name']); ?></div>
+                                                            <div class="file-size"><?php echo formatBytes($file['file_size']); ?></div>
+                                                        </div>
+                                                        <div class="file-actions">
+                                                            <button class="file-btn" onclick="viewDocument('<?php echo htmlspecialchars($file['stored_name']); ?>', '<?php echo htmlspecialchars($file['original_name']); ?>', '<?php echo htmlspecialchars($file['file_type']); ?>')">
+                                                                <i class="fas fa-eye"></i>
+                                                            </button>
+                                                            <a href="download.php?file=<?php echo urlencode($file['stored_name']); ?>&name=<?php echo urlencode($file['original_name']); ?>" class="file-btn download">
+                                                                <i class="fas fa-download"></i>
+                                                            </a>
+                                                        </div>
+                                                    </div>
+                                                <?php endforeach; ?>
+                                            </div>
+                                        <?php else: ?>
+                                            <span style="color: #6c757d; font-style: italic;">No files</span>
+                                        <?php endif; ?>
+                                    </td>
                                     <td><span class="status-btn pending">Pending</span></td>
                                 </tr>
                                 <?php endforeach; ?>
@@ -1208,6 +617,117 @@ mysqli_close($link);
                     </div>
                 <?php endif; ?>
             </div>
+
+            <!-- Profile Section -->
+            <div class="content-section" id="profile">
+                <div class="profile-container">
+                    <!-- Profile Header -->
+                    <div class="profile-header">
+                        <div class="profile-avatar">
+                            <?php echo strtoupper(substr($user_data['name'], 0, 1)); ?>
+                        </div>
+                        <div class="profile-info">
+                            <h2><?php echo htmlspecialchars($user_data['name']); ?></h2>
+                            <p><i class="fas fa-envelope"></i> <?php echo htmlspecialchars($user_data['email']); ?></p>
+                            <p><i class="fas fa-user-tag"></i> <?php echo htmlspecialchars($user_data['role']); ?></p>
+                            <p><i class="fas fa-building"></i> Diamond Heirs Facility</p>
+                        </div>
+                    </div>
+
+                    <!-- Profile Edit Form -->
+                    <div class="profile-form-container">
+                        <div class="profile-form-header">
+                            <h3><i class="fas fa-edit"></i> Edit Profile Information</h3>
+                            <p>Update your personal information and account settings</p>
+                        </div>
+
+                        <?php if (isset($profile_update_success) && $profile_update_success): ?>
+                            <div class="profile-alert success">
+                                <i class="fas fa-check-circle"></i> Profile updated successfully!
+                            </div>
+                        <?php endif; ?>
+
+                        <?php if (isset($profile_error_message) && !empty($profile_error_message)): ?>
+                            <div class="profile-alert error">
+                                <i class="fas fa-exclamation-circle"></i> <?php echo $profile_error_message; ?>
+                            </div>
+                        <?php endif; ?>
+
+                        <form method="POST" action="">
+                            <input type="hidden" name="update_profile" value="1">
+                            
+                            <!-- Basic Information -->
+                            <div class="profile-form-grid">
+                                <div class="profile-form-group">
+                                    <label for="profile_name"><i class="fas fa-user"></i> Full Name *</label>
+                                    <input type="text" id="profile_name" name="profile_name" value="<?php echo htmlspecialchars($user_data['name']); ?>" required>
+                                </div>
+                                
+                                <div class="profile-form-group">
+                                    <label for="profile_email"><i class="fas fa-envelope"></i> Email Address *</label>
+                                    <input type="email" id="profile_email" name="profile_email" value="<?php echo htmlspecialchars($user_data['email']); ?>" required>
+                                </div>
+                            </div>
+
+                            <!-- Password Change Section -->
+                            <div class="password-section">
+                                <h4><i class="fas fa-lock"></i> Change Password</h4>
+                                <p style="color: #666; margin-bottom: 20px; font-size: 0.9rem;">Leave password fields empty if you don't want to change your password</p>
+                                
+                                <div class="profile-form-grid">
+                                    <div class="profile-form-group full-width">
+                                        <label for="current_password">Current Password</label>
+                                        <div class="password-input-container">
+                                            <input type="password" id="current_password" name="current_password" placeholder="Enter your current password">
+                                            <button type="button" class="toggle-password" onclick="togglePassword('current_password')">
+                                                <i class="fas fa-eye"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <div class="profile-form-group">
+                                        <label for="new_password">New Password</label>
+                                        <div class="password-input-container">
+                                            <input type="password" id="new_password" name="new_password" placeholder="Enter new password (min. 6 characters)">
+                                            <button type="button" class="toggle-password" onclick="togglePassword('new_password')">
+                                                <i class="fas fa-eye"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <div class="profile-form-group">
+                                        <label for="confirm_password">Confirm New Password</label>
+                                        <div class="password-input-container">
+                                            <input type="password" id="confirm_password" name="confirm_password" placeholder="Confirm your new password">
+                                            <button type="button" class="toggle-password" onclick="togglePassword('confirm_password')">
+                                                <i class="fas fa-eye"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Submit Button -->
+                            <button type="submit" class="profile-update-btn">
+                                <i class="fas fa-save"></i> Update Profile
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Document Viewer Modal -->
+    <div id="documentModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modalTitle">Document Viewer</h3>
+                <span class="close" onclick="closeModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div id="documentViewer"></div>
+            </div>
         </div>
     </div>
 
@@ -1215,6 +735,140 @@ mysqli_close($link);
         // Global variables
         let currentUser = <?php echo json_encode($user_data); ?>;
         let userRequests = <?php echo json_encode($user_requests); ?>;
+
+        // File upload handling
+        document.getElementById('fileInput').addEventListener('change', function(e) {
+            const files = e.target.files;
+            const preview = document.getElementById('filesPreview');
+            const uploadDiv = document.querySelector('.file-upload');
+            
+            preview.innerHTML = '';
+            
+            if (files.length > 0) {
+                uploadDiv.classList.add('has-files');
+                uploadDiv.innerHTML = `
+                    <i class="fas fa-check-circle" style="color: #28a745;"></i>
+                    <p style="color: #28a745;">${files.length} file(s) selected</p>
+                    <small>Click to change selection</small>
+                `;
+                
+                for (let i = 0; i < files.length; i++) {
+                    const file = files[i];
+                    const fileDiv = document.createElement('div');
+                    fileDiv.className = 'file-preview';
+                    
+                    const fileIcon = getFileIcon(file.name);
+                    const fileSize = formatBytes(file.size);
+                    
+                    fileDiv.innerHTML = `
+                        <div style="display: flex; align-items: center; justify-content: space-between;">
+                            <div style="display: flex; align-items: center;">
+                                <i class="${fileIcon}" style="margin-right: 10px; color: #007bff;"></i>
+                                <div>
+                                    <div style="font-weight: 500;">${file.name}</div>
+                                    <div style="font-size: 0.8rem; color: #6c757d;">${fileSize}</div>
+                                </div>
+                            </div>
+                            <button type="button" onclick="removeFile(${i})" style="background: #dc3545; color: white; border: none; padding: 4px 8px; border-radius: 3px; cursor: pointer;">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    `;
+                    
+                    preview.appendChild(fileDiv);
+                }
+            } else {
+                uploadDiv.classList.remove('has-files');
+                uploadDiv.innerHTML = `
+                    <i class="fas fa-cloud-upload-alt"></i>
+                    <p>Drag and drop your files here or click to browse</p>
+                    <small>Support for multiple files (PDF, DOC, DOCX, JPG, PNG) - Max 5MB per file</small>
+                `;
+            }
+        });
+
+        // Get file icon based on extension
+        function getFileIcon(filename) {
+            const ext = filename.split('.').pop().toLowerCase();
+            switch(ext) {
+                case 'pdf': return 'fas fa-file-pdf';
+                case 'doc':
+                case 'docx': return 'fas fa-file-word';
+                case 'jpg':
+                case 'jpeg':
+                case 'png': return 'fas fa-file-image';
+                default: return 'fas fa-file';
+            }
+        }
+
+        // Format file size
+        function formatBytes(bytes, decimals = 2) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const dm = decimals < 0 ? 0 : decimals;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+        }
+
+        // Remove file from selection
+        function removeFile(index) {
+            const fileInput = document.getElementById('fileInput');
+            const dt = new DataTransfer();
+            const files = fileInput.files;
+            
+            for (let i = 0; i < files.length; i++) {
+                if (i !== index) {
+                    dt.items.add(files[i]);
+                }
+            }
+            
+            fileInput.files = dt.files;
+            fileInput.dispatchEvent(new Event('change'));
+        }
+
+        // Document viewer function
+        function viewDocument(storedName, originalName, fileType) {
+            const modal = document.getElementById('documentModal');
+            const title = document.getElementById('modalTitle');
+            const viewer = document.getElementById('documentViewer');
+            
+            title.textContent = originalName;
+            
+            const filePath = '../uploads/facility_documents/' + storedName;
+            
+            if (['jpg', 'jpeg', 'png'].includes(fileType.toLowerCase())) {
+                viewer.innerHTML = `<img src="${filePath}" style="max-width: 100%; height: auto;" alt="Document Image">`;
+            } else if (fileType.toLowerCase() === 'pdf') {
+                viewer.innerHTML = `<iframe src="${filePath}" class="document-viewer" type="application/pdf"></iframe>`;
+            } else {
+                viewer.innerHTML = `
+                    <div style="text-align: center; padding: 50px;">
+                        <i class="fas fa-file" style="font-size: 4rem; color: #6c757d; margin-bottom: 20px;"></i>
+                        <h3>Document Preview Not Available</h3>
+                        <p>This file type cannot be previewed in the browser.</p>
+                        <a href="download.php?file=${encodeURIComponent(storedName)}&name=${encodeURIComponent(originalName)}" class="file-btn download" style="display: inline-block; margin-top: 20px; padding: 10px 20px; text-decoration: none;">
+                            <i class="fas fa-download"></i> Download to View
+                        </a>
+                    </div>
+                `;
+            }
+            
+            modal.style.display = 'block';
+        }
+
+        // Close modal
+        function closeModal() {
+            document.getElementById('documentModal').style.display = 'none';
+        }
+
+        // Close modal when clicking outside
+        window.onclick = function(event) {
+            const modal = document.getElementById('documentModal');
+            if (event.target == modal) {
+                modal.style.display = 'none';
+            }
+        }
 
         // Navigation functions
         function showSection(sectionId) {
@@ -1243,12 +897,29 @@ mysqli_close($link);
         // Logout function
         function logout() {
             if (confirm('Are you sure you want to logout?')) {
-                window.location.href = '../logout.php';
+                window.location.href = '../index.php';
             }
         }
 
-        // Form submission handling
-        document.querySelector('form').addEventListener('submit', function(e) {
+        // Toggle password visibility
+        function togglePassword(inputId) {
+            const input = document.getElementById(inputId);
+            const button = input.parentNode.querySelector('.toggle-password');
+            const icon = button.querySelector('i');
+            
+            if (input.type === 'password') {
+                input.type = 'text';
+                icon.classList.remove('fa-eye');
+                icon.classList.add('fa-eye-slash');
+            } else {
+                input.type = 'password';
+                icon.classList.remove('fa-eye-slash');
+                icon.classList.add('fa-eye');
+            }
+        }
+
+        // Form submission handling for requests
+        document.querySelector('form[enctype="multipart/form-data"]').addEventListener('submit', function(e) {
             const requestType = document.getElementById('constituency').value;
             const allowedTypes = ['Payment', 'Job'];
             
@@ -1268,8 +939,62 @@ mysqli_close($link);
             setTimeout(() => {
                 submitBtn.innerHTML = originalContent;
                 submitBtn.disabled = false;
+            }, 3000);
+        });
+
+        // Profile form validation
+        document.querySelector('form[method="POST"]:not([enctype])').addEventListener('submit', function(e) {
+            const newPassword = document.getElementById('new_password').value;
+            const confirmPassword = document.getElementById('confirm_password').value;
+            const currentPassword = document.getElementById('current_password').value;
+            
+            // If user wants to change password
+            if (newPassword || confirmPassword) {
+                if (!currentPassword) {
+                    e.preventDefault();
+                    alert('Current password is required to change password.');
+                    return false;
+                }
+                
+                if (newPassword !== confirmPassword) {
+                    e.preventDefault();
+                    alert('New passwords do not match.');
+                    return false;
+                }
+                
+                if (newPassword.length < 6) {
+                    e.preventDefault();
+                    alert('New password must be at least 6 characters long.');
+                    return false;
+                }
+            }
+            
+            const submitBtn = this.querySelector('.profile-update-btn');
+            const originalContent = submitBtn.innerHTML;
+            
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Updating...';
+            submitBtn.disabled = true;
+            
+            // Re-enable button after form processes
+            setTimeout(() => {
+                submitBtn.innerHTML = originalContent;
+                submitBtn.disabled = false;
             }, 2000);
+        });
+
+        // Auto-hide alerts after 5 seconds
+        document.addEventListener('DOMContentLoaded', function() {
+            const alerts = document.querySelectorAll('.profile-alert, .alert');
+            alerts.forEach(alert => {
+                setTimeout(() => {
+                    alert.style.opacity = '0';
+                    setTimeout(() => {
+                        alert.style.display = 'none';
+                    }, 300);
+                }, 5000);
+            });
         });
     </script>
 </body>
 </html>
+
